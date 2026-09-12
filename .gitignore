@@ -1,0 +1,5 @@
+node_modules/
+.env
+chrome_session/
+error_screenshot.png
+*.log
