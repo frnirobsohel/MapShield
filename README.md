@@ -1,44 +1,44 @@
 # 🤖 Google Maps Auto Fake Review Reporter
 
-এই এজেন্টটি সম্পূর্ণ স্বয়ংক্রিয়ভাবে এবং মানুষের মতো প্রাকৃতিক গতিতে গুগল ম্যাপসের ফেক রিভিউ রিপোর্ট করার জন্য তৈরি করা হয়েছে।
+An intelligent, fully automated agent engineered with human-like behavioral biometrics and anti-detection capabilities to report fake reviews on Google Maps.
 
 ---
 
-## 🌟 মূল বৈশিষ্ট্যসমূহ (Key Features)
+## 🌟 Key Features
 
-1. **গুগল লগইন ও সেশন সংরক্ষণ (`chrome_session`):**
-   - গুগল ম্যাপসে রিভিউ রিপোর্ট করার জন্য গুগল অ্যাকাউন্টে লগইন থাকা প্রয়োজন।
-   - এজেন্ট স্বয়ংক্রিয়ভাবে লগইন করে এবং সেশন সংরক্ষণ করে রাখে, যাতে পরবর্তীতে আর বারবার লগইন বা ওটিপি/ব্যাকআপ কোড না দিতে হয়।
-   - ২-স্টেপ ভেরিফিকেশন (2FA) এবং ৮ সংখ্যার ব্যাকআপ কোড স্বয়ংক্রিয়ভাবে হ্যান্ডেল করে।
+1. **Google Login & Session Persistence (`chrome_session`):**
+   - Reporting reviews requires an authenticated Google Account.
+   - The agent handles authentication automatically and saves the profile session in `chrome_session` so subsequent runs bypass repetitive logins and 2FA prompts.
+   - Automatically handles 2-Step Verification (2FA) and 8-digit backup codes.
 
-2. **হিউম্যান-লাইক অ্যান্টি-ডিটেকশন (`ghost-cursor` + `rebrowser-puppeteer`):**
-   - সাধারণ বটের মতো ধরা পড়ার ঝুঁকি নেই।
-   - প্রাকৃতিক মাউস কার্ভ এবং মানুষের স্ক্রলিং মুভমেন্ট দিয়ে কাজ করে।
+2. **Human-like Anti-Detection (`ghost-cursor` + `rebrowser-puppeteer`):**
+   - Zero-CDP leak anti-detection runtime with realistic mouse curves and Bezier trajectories.
+   - Human motor dynamics including micro-delays, natural typos, backspaces, and subconscious mouse wandering.
 
-3. **স্বয়ংক্রিয় ৩-ডট ও রিপোর্ট ক্লিক:**
-   - রিভিউ পেজ ওপেন করে ৩-ডট (3-Dots / More options) মেনু খুঁজে বের করে ক্লিক করে।
-   - পপ-আপ মেনু থেকে "Report review" / "রিভিউটি রিপোর্ট করুন" অপশনে ক্লিক সম্পন্ন করে।
+3. **Automated 3-Dots Detection & Spam Submission:**
+   - Automatically locates the 3-dots (More options) menu on the target Google Maps review.
+   - Clicks "Report review", detects and resolves the reporting modal/tab, chooses the "Spam" category, and completes submission with verification proof.
 
 ---
 
-## 🚀 কীভাবে ব্যবহার করবেন?
+## 🚀 How to Use
 
-### ধাপ ১: [`.env`](file:///c:/Users/SOHEL/Desktop/google%20loging/.env) কনফিগারেশন
-ফোল্ডারে থাকা [`.env`](file:///c:/Users/SOHEL/Desktop/google%20loging/.env) ফাইলটি ওপেন করে আপনার তথ্যগুলো দিন:
+### Step 1: Configure [`.env`](file:///.env)
+Open the [`.env`](file:///.env) file in the root directory and configure your credentials:
 
 ```env
-# গুগল অ্যাকাউন্ট লগইন তথ্য
+# Google Account Login Credentials
 GOOGLE_EMAIL=your_email@gmail.com
 GOOGLE_PASSWORD=your_password
-GOOGLE_BACKUP_CODE=12345678, 87654321    # আপনার ৮ ডিজিটের 2FA ব্যাকআপ কোড
+GOOGLE_BACKUP_CODE=12345678, 87654321    # Your 8-digit 2FA backup codes (comma-separated)
 
-# যে গুগল ম্যাপস ফেক রিভিউটি রিপোর্ট করতে চান তার লিঙ্ক
+# Google Maps fake review URL to report
 MAPS_REVIEW_URL=https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7
 ```
 
-### ধাপ ২: রান করা
-ফোল্ডারে থাকা [`run.bat`](file:///c:/Users/SOHEL/Desktop/google%20loging/run.bat) ফাইলে ডাবল-ক্লিক করুন অথবা টার্মিনালে রান করুন:
+### Step 2: Run the Agent
+Double-click [`run.bat`](file:///run.bat) or execute via terminal:
 ```bash
 node agent.js
 ```
-এজেন্ট স্বয়ংক্রিয়ভাবে ব্রাউজার ওপেন করবে, অ্যাকাউন্ট যাচাই করবে, ম্যাপস রিভিউ পেজে যাবে এবং ৩-ডট থেকে "Report review" ক্লিক সম্পন্ন করবে!
+The agent will launch the browser, ensure authentication, navigate to the target review URL, select "Report review", submit as "Spam", and save a verification screenshot (`maps_report_spam_submitted.png`).

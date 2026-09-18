@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MapsShield Pro - Desktop Application</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  </noscript>
+</head>
+<body class="dark-theme">
+  <div class="app-layout">
+    
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar">
+      <!-- App Brand / Logo -->
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+            <circle cx="12" cy="9" r="2.5"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h2>MapsShield</h2>
+          <span class="brand-tag">PRO</span>
+        </div>
+      </div>
+
+      <!-- Navigation Menu -->
+      <nav class="sidebar-menu">
+        <button class="nav-item active" data-tab="tab-dashboard">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+            </svg>
+          </div>
+          <span class="nav-label">Dashboard</span>
+        </button>
+
+        <button class="nav-item" data-tab="tab-control">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+          </div>
+          <span class="nav-label">Control</span>
+        </button>
+
+        <button class="nav-item" data-tab="tab-account">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <span class="nav-label">Account</span>
+        </button>
+
+        <button class="nav-item" data-tab="tab-proxy">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <span class="nav-label">Proxy</span>
+        </button>
+
+        <button class="nav-item" data-tab="tab-reporter">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </div>
+          <span class="nav-label">Link</span>
+        </button>
+
+        <button class="nav-item" data-tab="tab-about">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          </div>
+          <span class="nav-label">About</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="session-card">
+          <div class="session-indicator">
+            <span class="status-dot" id="sidebarStatusDot"></span>
+            <span class="session-text" id="sidebarSessionText">Checking Session...</span>
+          </div>
+        </div>
+        <div class="app-version">v1.2.0 • Anti-Detect Pro</div>
+      </div>
+    </aside>
+
+    <!-- RIGHT MAIN CONTENT AREA -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="pageTitle">Dashboard</h1>
+          <p id="pageSubtitle">Live statistics, automation progress & activity terminal</p>
+        </div>
+        <div class="topbar-right">
+          <div class="status-pill" id="agentStatusPill">
+            <span class="pill-dot"></span>
+            <span id="agentStatusPillText">System Idle</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- PANES CONTAINER -->
+      <div class="panes-wrapper">
+
+        <!-- 1. DASHBOARD PANE -->
+        <section id="tab-dashboard" class="pane active">
+          
+          <!-- KPI Stats Grid -->
+          <div class="stats-grid">
+            <!-- Card 1: Accounts Loaded -->
+            <div class="stat-card">
+              <div class="stat-icon emerald">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Accounts Loaded</span>
+                <h3 id="dashAccountsLoaded">0 Accounts</h3>
+                <span class="stat-subtext" id="dashAccountsDetail">CSV / Excel loaded</span>
+              </div>
+            </div>
+
+            <!-- Card 2: Target Links Queued -->
+            <div class="stat-card">
+              <div class="stat-icon cyan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Target Links</span>
+                <h3 id="dashTargetLinks">0 Links</h3>
+                <span class="stat-subtext" id="dashLinksDetail">in active queue</span>
+              </div>
+            </div>
+
+            <!-- Card 3: Reports Done / Completed -->
+            <div class="stat-card">
+              <div class="stat-icon indigo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Reports Completed</span>
+                <h3 id="dashReportsDone">0 Completed</h3>
+                <span class="stat-subtext" id="dashReportsRate">0% finished</span>
+              </div>
+            </div>
+
+            <!-- Card 4: Accounts Used for Reporting -->
+            <div class="stat-card">
+              <div class="stat-icon purple">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <polyline points="16 11 18 13 22 9"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Accounts Used</span>
+                <h3 id="dashAccountsUsed">0 Used</h3>
+                <span class="stat-subtext">for reporting</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Action & Progress Strip -->
+          <div class="card dash-action-bar">
+            <div class="action-bar-left">
+              <button id="btnDashStart" class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <span>Start Reporting</span>
+              </button>
+              <button id="btnDashStop" class="btn btn-danger" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="6" y="6" width="12" height="12"/>
+                </svg>
+                <span>Stop</span>
+              </button>
+            </div>
+
+            <div class="action-bar-center">
+              <div class="dash-progress-wrap">
+                <div class="dash-progress-info">
+                  <span id="dashProgressText">Ready to start</span>
+                  <span id="dashProgressPercent">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="dashProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="action-bar-right">
+              <div class="dash-proof-chip" id="dashProofChip">
+                <span class="chip-label">Proof Screenshot:</span>
+                <span class="chip-status" id="dashProofStatus">None yet</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- LIVE ACTIVITY TERMINAL AT THE BOTTOM OF DASHBOARD -->
+          <div class="terminal-box dash-terminal mt-16">
+            <div class="terminal-header">
+              <div class="terminal-dots">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <div class="terminal-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="4 17 10 11 4 5"/>
+                  <line x1="12" y1="19" x2="20" y2="19"/>
+                </svg>
+                <span>Live Activity Terminal (Real-time Execution Log)</span>
+              </div>
+              <div class="terminal-actions">
+                <button id="btnClearDashConsole" class="btn-sm btn-subtle">Clear</button>
+                <label class="auto-scroll-toggle">
+                  <input type="checkbox" id="dashAutoScroll" checked> Auto-scroll
+                </label>
+              </div>
+            </div>
+            <div class="terminal-body" id="dashConsoleOutput">
+              <div class="log-line log-system">MapsShield Pro ready. Review stats above and click "Start Reporting".</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. CONTROL PANE -->
+        <section id="tab-control" class="pane">
+          <div class="control-layout">
+            
+            <!-- Browser Selection Card -->
+            <div class="card browser-select-card">
+              <div class="card-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  <h2 style="font-size: 1.05rem; font-weight: 600;">Browser Selection</h2>
+                </div>
+                <span class="badge badge-success" id="browserDetectedBadge">Detected</span>
+              </div>
+              <p class="card-desc">Select which installed browser you want to use for automation.</p>
+
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="margin-bottom: 8px; display: block;">Installed Browsers</label>
+                <div id="browserChecklist" class="browser-checklist" style="display: flex; flex-direction: column; gap: 8px;">
+                  <!-- Dynamic browser checkboxes injected by JS -->
+                </div>
+                <div class="toggle-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+                  <label class="switch">
+                    <input type="checkbox" id="chkRandomBrowser" checked>
+                    <span class="slider"></span>
+                  </label>
+                  <span class="switch-label" style="font-size: 0.82rem; font-weight: 500;">Randomly rotate among checked browsers for each review job</span>
+                </div>
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                  <button type="button" id="btnBrowseBrowser" class="btn btn-secondary btn-sm" title="Browse for a custom Chromium or portable browser executable">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span>Browse Custom Browser (.exe)</span>
+                  </button>
+                  <span id="activeBrowserPath" style="font-size: 0.72rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI API KEY PANE (Moved here from separate tab) -->
+            <div class="card form-card">
+              <div class="card-header">
+                <h2>AI Engine & API Configuration</h2>
+                <span id="aiBadge" class="badge badge-purple">Gemini Powered</span>
+              </div>
+              <p class="card-desc">Integrate AI for intelligent review context inspection, automated sentiment evaluation, and smart violation reporting.</p>
+
+              <div class="form-group">
+                <label for="selectAiProvider">AI Provider</label>
+                <select id="selectAiProvider" class="custom-select">
+                  <option value="gemini" selected>Google Gemini</option>
+                  <option value="openai">OpenAI (ChatGPT)</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="deepseek">DeepSeek</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label id="labelAiKey" for="inputAiKey">Google Gemini API Key</label>
+                <div class="password-box">
+                  <input type="password" id="inputAiKey" placeholder="AIzaSy..." />
+                  <button type="button" id="btnToggleAiKey" class="btn-eye" title="Toggle Show/Hide">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                </div>
+                <span class="input-help">Your API key is saved securely in your local SQLite database.</span>
+              </div>
+
+              <div class="form-group">
+                <label for="selectAiModel">AI Model</label>
+                <select id="selectAiModel" class="custom-select">
+                  <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash (Fastest & Recommended)</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>AI Review Pre-Inspection</label>
+                <div class="toggle-row">
+                  <label class="switch">
+                    <input type="checkbox" id="checkAiInspection">
+                    <span class="slider"></span>
+                  </label>
+                  <span class="switch-label">Automatically verify fake review signals before submitting report</span>
+                </div>
+              </div>
+
+              <div class="button-row mt-20">
+                <button id="btnSaveAi" class="btn btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  <span>Save AI Configuration</span>
+                </button>
+              </div>
+
+              <div id="aiToast" class="toast-msg"></div>
+            </div>
+
+            <!-- Live Execution Control Card -->
+            <div class="card execution-card" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.7), rgba(30, 41, 59, 0.7)); border: 1px solid var(--border); border-radius: var(--radius-md);">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <h3 style="font-size: 1.05rem; font-weight: 600; margin: 0;">Execution Controller</h3>
+                  <span id="controlProgressStatus" style="font-size: 0.8rem; color: var(--text-muted);">Ready to start</span>
+                  <span id="controlProgressPercent" class="badge badge-neutral" style="font-size: 0.72rem;">0%</span>
+                </div>
+                <div style="width: 280px; height: 5px; background: var(--bg-card); border-radius: 4px; overflow: hidden; margin-top: 6px;">
+                  <div id="controlProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); transition: width 0.3s ease;"></div>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <button id="btnControlStart" class="btn btn-primary" style="padding: 10px 22px; font-weight: 600;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                  </svg>
+                  <span>Start Reporter Agent</span>
+                </button>
+                <button id="btnControlStop" class="btn btn-danger" style="padding: 10px 20px;" disabled>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                  </svg>
+                  <span>Stop</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 3. GOOGLE ACCOUNT PANE (BULK CSV/EXCEL UPLOAD & ACCOUNTS TABLE) -->
+        <section id="tab-account" class="pane">
+          
+          <!-- UNIFIED GOOGLE SHEETS SPREADSHEET CARD -->
+          <div class="card sheet-card">
+            
+            <!-- Sheet Top Toolbar (Google Sheets Style) -->
+            <div class="sheet-header-toolbar">
+              <div class="sheet-title-area">
+                <div class="sheet-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="3" y1="9" x2="21" y2="9"/>
+                    <line x1="3" y1="15" x2="21" y2="15"/>
+                    <line x1="9" y1="3" x2="9" y2="21"/>
+                    <line x1="15" y1="3" x2="15" y2="21"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="sheet-title-row">
+                    <h3>Google Accounts Sheet</h3>
+                    <span class="badge badge-neutral" id="accountsTableBadge">0 Accounts</span>
+                  </div>
+                  <div class="sheet-stats-strip">
+                    <span class="sheet-stat-pill">Total: <strong id="filterCountAll">0</strong></span>
+                    <span class="sheet-stat-pill text-emerald">Unused: <strong id="filterCountUnused">0</strong></span>
+                    <span class="sheet-stat-pill text-purple">Used: <strong id="filterCountUsed">0</strong></span>
+                    <span class="sheet-stat-pill text-rose">Failed: <strong id="filterCountFailed">0</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sheet Actions (Import, Add Row, Template, Clear) -->
+              <div class="sheet-actions">
+                <button id="btnUploadAccounts" class="btn btn-primary btn-sm" title="Upload accounts from CSV or Excel">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <span>Import (CSV / Excel)</span>
+                </button>
+
+                <button id="btnToggleManualAdd" class="btn btn-secondary btn-sm" title="Add single account row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <span>Add Row</span>
+                </button>
+
+                <button id="btnDownloadTemplate" class="btn btn-secondary btn-sm" title="Download sample CSV template">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  <span>Template</span>
+                </button>
+
+                <button id="btnResetAllAccountsHistory" class="btn btn-secondary btn-sm" title="Reset all accounts history so they can be used for 1 new report each" style="border-color: rgba(56, 189, 248, 0.4); color: #38bdf8;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                  </svg>
+                  <span>Reset History</span>
+                </button>
+
+                <button id="btnClearAllAccounts" class="btn btn-danger btn-sm" title="Clear table">
+                  <span>Clear All</span>
+                </button>
+
+                <button id="btnClearSession" class="btn btn-warning btn-sm" title="Reset Chrome login session">
+                  <span>Reset Session</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="accountToast" class="toast-msg"></div>
+
+            <!-- Inline Add Account Drawer -->
+            <div id="manualAddBox" class="sheet-add-drawer" style="display: none;">
+              <div class="drawer-header">
+                <h4 style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <span>Add New Account Row to Sheet</span>
+                </h4>
+                <span id="closeManualAdd" class="modal-close" style="position: static; font-size: 20px; line-height: 1;">&times;</span>
+              </div>
+              <div class="drawer-grid">
+                <input type="email" id="manualEmail" placeholder="Google Email (e.g. name@gmail.com)" />
+                <input type="password" id="manualPassword" placeholder="Password" />
+                <input type="text" id="manual2fa" placeholder="2FA Secret (Optional)" />
+                <input type="text" id="manualBackupCode" placeholder="Backup Code(s)" />
+                <button id="btnAddAccountToTable" class="btn btn-primary btn-sm">Insert Row</button>
+              </div>
+            </div>
+
+            <!-- Sheet Search & Filter Toolbar -->
+            <div class="sheet-subbar">
+              <div class="sheet-search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="accountSearchInput" placeholder="Filter sheet by email, password, 2FA, backup code, error..." />
+                <button id="btnClearSearch" class="btn-clear-search" style="display: none;" title="Clear search">&times;</button>
+              </div>
+
+              <div class="sheet-filter-tabs">
+                <button class="filter-tab active" data-filter="all">All Rows</button>
+                <button class="filter-tab" data-filter="unused">Unused</button>
+                <button class="filter-tab" data-filter="used">Used</button>
+                <button class="filter-tab filter-failed" data-filter="failed">Failed / Error</button>
+              </div>
+            </div>
+
+            <!-- CLEAN SPREADSHEET GRID (Google Sheets Aesthetic) -->
+            <div class="sheet-table-scroll">
+              <table class="sheet-table" id="accountsTable">
+                <colgroup>
+                  <col style="width: 44px;">
+                  <col style="width: 26%;">
+                  <col style="width: 14%;">
+                  <col style="width: 13%;">
+                  <col style="width: 13%;">
+                  <col style="width: 10%;">
+                  <col style="width: 16%;">
+                  <col style="width: 68px;">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="th-index">#</th>
+                    <th class="th-email">Email Address</th>
+                    <th class="th-pass">Password</th>
+                    <th class="th-2fa">2FA Secret</th>
+                    <th class="th-codes">Backup Codes</th>
+                    <th class="th-usage">Usage</th>
+                    <th class="th-status">Status / Errors</th>
+                    <th class="th-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="accountsTableBody">
+                  <!-- Dynamic spreadsheet rows rendered by app.js -->
+                </tbody>
+              </table>
+
+              <div id="accountsEmptyState" style="display: none;"></div>
+            </div>
+
+            <!-- SHEET MINIMAL PAGINATION FOOTER (Google Sheets / Gmail Style) -->
+            <div class="sheet-footer" id="accountsPaginationBar">
+              <div class="sheet-footer-info">
+                <span id="paginationInfo">Showing 0 to 0 of 0 accounts</span>
+              </div>
+
+              <div class="sheet-footer-controls">
+                <div class="sheet-page-size">
+                  <label for="selectPageSize">Rows:</label>
+                  <select id="selectPageSize" class="sheet-select-sm">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                  </select>
+                </div>
+
+                <div class="sheet-page-nav">
+                  <button class="page-nav-btn" id="btnPageFirst" title="First Page" disabled>&laquo;</button>
+                  <button class="page-nav-btn" id="btnPagePrev" title="Previous Page" disabled>&lsaquo;</button>
+                  <div class="page-numbers-wrap" id="pageNumbersContainer">
+                    <!-- Page pills -->
+                  </div>
+                  <button class="page-nav-btn" id="btnPageNext" title="Next Page" disabled>&rsaquo;</button>
+                  <button class="page-nav-btn" id="btnPageLast" title="Last Page" disabled>&raquo;</button>
+                </div>
+
+                <div class="sheet-page-jump">
+                  <label for="inputPageJump">Go:</label>
+                  <input type="number" id="inputPageJump" min="1" placeholder="Page" />
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- 4. PROXY PANE (GOOGLE SHEETS SPREADSHEET TABLE) -->
+        <section id="tab-proxy" class="pane">
+          <div class="card sheet-card">
+            
+            <!-- Sheet Top Toolbar (Google Sheets Style) -->
+            <div class="sheet-header-toolbar">
+              <div class="sheet-title-area">
+                <div class="sheet-icon" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="sheet-title-row">
+                    <h3>Proxy Routing Sheet</h3>
+                    <span class="badge badge-neutral" id="proxyTableBadge">0 Proxies</span>
+                  </div>
+                  <div class="sheet-stats-strip">
+                    <span class="sheet-stat-pill">Total: <strong id="proxyCountAll">0</strong></span>
+                    <span class="sheet-stat-pill text-emerald">Ready: <strong id="proxyCountReady">0</strong></span>
+                    <span class="sheet-stat-pill text-sky">Testing: <strong id="proxyCountTesting">0</strong></span>
+                    <span class="sheet-stat-pill text-rose">Failed: <strong id="proxyCountFailed">0</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sheet Actions (Toggle, Import, Add Row, Test All, Clear) -->
+              <div class="sheet-actions">
+                <div class="toggle-group" style="padding: 3px 8px; background: #080c14; border: 1px solid var(--border); border-radius: 4px; margin-right: 2px;">
+                  <label class="switch">
+                    <input type="checkbox" id="proxyEnableToggle">
+                    <span class="slider"></span>
+                  </label>
+                  <span id="proxyEnableLabel" class="switch-label" style="font-size: 0.74rem; font-weight: 600;">Disabled</span>
+                </div>
+
+                <button id="btnUploadProxies" class="btn btn-primary btn-sm" title="Import proxies from TXT, CSV, or Excel">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <span>Import (TXT / CSV)</span>
+                </button>
+
+                <button id="btnToggleAddProxy" class="btn btn-secondary btn-sm" title="Add single proxy row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <span>Add Proxy</span>
+                </button>
+
+                <button id="btnTestAllProxies" class="btn btn-secondary btn-sm" title="Test latency & reachability of all proxies">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Test All</span>
+                </button>
+
+                <button id="btnClearAllProxies" class="btn btn-danger btn-sm" title="Clear all proxies">
+                  <span>Clear All</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="proxyToast" class="toast-msg"></div>
+
+            <!-- Inline Add Proxy Drawer (GoLogin & CherryProxy / NodeMaven Bulk Paste Style) -->
+            <div id="manualAddProxyBox" class="sheet-add-drawer" style="display: none; padding: 14px 16px; background: #080c14; border-bottom: 1px solid var(--border);">
+              <div class="drawer-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                  <h4 style="display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; color: #fff;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"/>
+                      <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    <span>Add Proxies</span>
+                  </h4>
+                  <div class="sheet-filter-tabs" style="margin: 0; padding: 0;">
+                    <button type="button" class="filter-tab active" id="tabProxyModeSingle" style="padding: 3px 10px; font-size: 11px;">Single String (GoLogin Style)</button>
+                    <button type="button" class="filter-tab" id="tabProxyModeBulk" style="padding: 3px 10px; font-size: 11px;">Bulk Paste (CherryProxy / NodeMaven)</button>
+                  </div>
+                </div>
+                <span id="closeManualAddProxy" class="modal-close" style="position: static; font-size: 18px; line-height: 1; cursor: pointer;">&times;</span>
+              </div>
+
+              <!-- 1. Single String Quick Input (GoLogin / AdsPower style) -->
+              <div id="proxySingleModeArea">
+                <div class="drawer-grid" style="grid-template-columns: 100px 1fr auto; gap: 8px; align-items: center;">
+                  <select id="manualProxyProtocol" class="custom-select" style="font-size: 0.76rem; padding: 6px 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff;">
+                    <option value="http" selected>HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                  <input type="text" id="manualProxyString" placeholder="Paste proxy: 198.51.100.24:8080:username:password or 198.51.100.24:8080" style="font-family: var(--font-mono, monospace); font-size: 0.8rem; padding: 6px 10px;" />
+                  <button id="btnAddProxyToTable" class="btn btn-primary btn-sm" style="white-space: nowrap;">Insert Proxy</button>
+                </div>
+                <div id="proxySinglePreview" style="margin-top: 6px; font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 8px;">
+                  <span style="color: #64748b;">⚡ Paste one line directly from CherryProxy, NodeMaven, or GoLogin (no need to split IP & port). Press Enter to add.</span>
+                </div>
+              </div>
+
+              <!-- 2. CherryProxy / NodeMaven Multi-line Bulk Paste -->
+              <div id="proxyBulkModeArea" style="display: none;">
+                <textarea id="manualProxyBulkText" rows="4" placeholder="Paste bulk proxies directly from CherryProxy, NodeMaven, Smartproxy, etc. (one proxy per line):&#10;142.250.190.46:8000:username:password&#10;185.220.101.5:3128:user2:pass2&#10;socks5://user3:pass3@192.168.1.50:1080" style="width: 100%; font-family: var(--font-mono, monospace); font-size: 0.78rem; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff; resize: vertical; line-height: 1.5;"></textarea>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 11px; color: var(--text-dim);">Default Protocol:</span>
+                    <select id="bulkProxyDefaultProto" class="custom-select" style="font-size: 0.74rem; padding: 3px 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff;">
+                      <option value="http" selected>HTTP</option>
+                      <option value="https">HTTPS</option>
+                      <option value="socks5">SOCKS5</option>
+                    </select>
+                    <span id="bulkProxyCountBadge" class="sheet-stat-pill text-sky">0 proxies detected</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <button type="button" id="btnClearBulkProxyText" class="btn btn-secondary btn-sm" style="font-size: 11px;">Clear Text</button>
+                    <button type="button" id="btnImportBulkProxy" class="btn btn-primary btn-sm">Import All to Sheet</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subbar: Search & Filter Tabs -->
+            <div class="sheet-subbar">
+              <div class="sheet-search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="proxySearchInput" placeholder="Filter sheet by IP, port, protocol, user, latency, status..." />
+                <button id="btnClearProxySearch" class="btn-clear-search" style="display: none;" title="Clear search">&times;</button>
+              </div>
+
+              <div class="sheet-filter-tabs">
+                <button class="filter-tab active" data-proxy-filter="all">All Rows</button>
+                <button class="filter-tab" data-proxy-filter="ready">Ready</button>
+                <button class="filter-tab" data-proxy-filter="untested">Untested</button>
+                <button class="filter-tab filter-failed" data-proxy-filter="failed">Failed / Timeout</button>
+              </div>
+            </div>
+
+            <!-- Proxy Table Grid (Google Sheets Layout) -->
+            <div class="sheet-table-scroll">
+              <table class="sheet-table" id="proxiesTable">
+                <colgroup>
+                  <col style="width: 44px;">
+                  <col style="width: 24%;">
+                  <col style="width: 10%;">
+                  <col style="width: 18%;">
+                  <col style="width: 24%;">
+                  <col style="width: 11%;">
+                  <col style="width: 11%;">
+                  <col style="width: 84px;">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="th-index">#</th>
+                    <th>Proxy (IP : Port)</th>
+                    <th>Protocol</th>
+                    <th>Authentication</th>
+                    <th>Full String (Copy)</th>
+                    <th>Ping / Latency</th>
+                    <th>Status</th>
+                    <th class="th-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="proxiesTableBody">
+                  <!-- Dynamic proxy rows or min 10 empty rows -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Proxy Footer Pagination -->
+            <div class="sheet-footer" id="proxiesPaginationBar">
+              <div class="sheet-footer-info">
+                <span id="proxyPaginationInfo">Showing 0 to 0 of 0 proxies</span>
+              </div>
+
+              <div class="sheet-footer-controls">
+                <div class="sheet-page-size">
+                  <label for="selectProxyPageSize">Rows:</label>
+                  <select id="selectProxyPageSize" class="sheet-select-sm">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+
+                <div class="sheet-page-nav">
+                  <button class="page-nav-btn" id="btnProxyPageFirst" title="First Page" disabled>&laquo;</button>
+                  <button class="page-nav-btn" id="btnProxyPagePrev" title="Previous Page" disabled>&lsaquo;</button>
+                  <div class="page-numbers-wrap" id="proxyPageNumbersContainer"></div>
+                  <button class="page-nav-btn" id="btnProxyPageNext" title="Next Page" disabled>&rsaquo;</button>
+                  <button class="page-nav-btn" id="btnProxyPageLast" title="Last Page" disabled>&raquo;</button>
+                </div>
+
+                <div class="sheet-page-jump">
+                  <label for="inputProxyPageJump">Go:</label>
+                  <input type="number" id="inputProxyPageJump" min="1" placeholder="Page" />
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 5. REPORTER LINK PANE (GOOGLE SHEETS SPREADSHEET TABLE) -->
+        <section id="tab-reporter" class="pane">
+          <div class="card sheet-card">
+            
+            <!-- Sheet Top Toolbar (Google Sheets Style) -->
+            <div class="sheet-header-toolbar">
+              <div class="sheet-title-area">
+                <div class="sheet-icon" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="sheet-title-row">
+                    <h3>Target Review Links Sheet</h3>
+                    <span class="badge badge-neutral" id="linksTableBadge">0 Links</span>
+                  </div>
+                  <div class="sheet-stats-strip">
+                    <span class="sheet-stat-pill">Total: <strong id="linkCountAll">0</strong></span>
+                    <span class="sheet-stat-pill text-emerald">Completed: <strong id="linkCountCompleted">0</strong></span>
+                    <span class="sheet-stat-pill text-sky">Queued: <strong id="linkCountQueued">0</strong></span>
+                    <span class="sheet-stat-pill text-rose">Failed: <strong id="linkCountFailed">0</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sheet Actions (Import, Add Row, Clear) -->
+              <div class="sheet-actions">
+                <button id="btnUploadLinks" class="btn btn-primary btn-sm" title="Import review URLs from TXT, CSV, or Excel">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <span>Import (TXT / CSV)</span>
+                </button>
+
+                <button id="btnToggleAddLink" class="btn btn-secondary btn-sm" title="Add single review link row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <span>Add Link</span>
+                </button>
+
+                <button id="btnClearAllLinks" class="btn btn-danger btn-sm" title="Clear all review links">
+                  <span>Clear All</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="reporterToast" class="toast-msg"></div>
+
+            <!-- Inline Add Link Drawer -->
+            <div id="manualAddLinkBox" class="sheet-add-drawer" style="display: none;">
+              <div class="drawer-header">
+                <h4 style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  <span>Add New Target Review Link</span>
+                </h4>
+                <span id="closeManualAddLink" class="modal-close" style="position: static; font-size: 18px; line-height: 1;">&times;</span>
+              </div>
+              <div class="drawer-grid" style="grid-template-columns: 3.2fr 2.4fr 1fr auto;">
+                <input type="text" id="manualLinkUrl" placeholder="Target Review URL (e.g. https://maps.app.goo.gl/...)" />
+                <select id="manualLinkCategory" class="custom-select" style="font-size: 0.76rem; padding: 5px 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff;">
+                  <option value="ai-auto" selected>🤖 AI Report</option>
+                  <option value="legal">⚖️ AI Legal</option>
+                  <option value="both">⚡ AI Dual</option>
+                  <option value="offtopic">1. 🚫 Off topic</option>
+                  <option value="spam">2. 🗑️ Spam</option>
+                  <option value="conflict">3. ⚔️ Conflict of interest</option>
+                  <option value="profanity">4. 🤬 Profanity</option>
+                  <option value="harmful">5. ⚠️ Harmful</option>
+                  <option value="bullying">6. 👊 Bullying or harassment</option>
+                  <option value="discrimination">7. 🛑 Discrimination or hate speech</option>
+                  <option value="personal_info">8. 🔒 Personal information</option>
+                  <option value="not_helpful">9. ❓ Not helpful</option>
+                </select>
+                <input type="number" id="manualLinkTargetCount" min="1" value="1" placeholder="Target Reports (e.g. 5)" title="Target Reports Needed" style="font-family: var(--font-mono, monospace); font-size: 0.78rem; padding: 5px 8px;" />
+                <button id="btnAddLinkToTable" class="btn btn-primary btn-sm">Insert Row</button>
+              </div>
+            </div>
+
+            <!-- Subbar: Search & Filter Tabs -->
+            <div class="sheet-subbar">
+              <div class="sheet-search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="linkSearchInput" placeholder="Filter sheet by URL, reason, mode, status..." />
+                <button id="btnClearLinkSearch" class="btn-clear-search" style="display: none;" title="Clear search">&times;</button>
+              </div>
+
+              <div class="sheet-filter-tabs">
+                <button class="filter-tab active" data-link-filter="all">All Rows</button>
+                <button class="filter-tab" data-link-filter="queued">Queued</button>
+                <button class="filter-tab" data-link-filter="completed">Completed</button>
+                <button class="filter-tab filter-failed" data-link-filter="failed">Failed / Error</button>
+              </div>
+            </div>
+
+            <!-- Review Links Table Grid (Google Sheets Layout) -->
+            <div class="sheet-table-scroll">
+              <table class="sheet-table" id="linksTable">
+                <colgroup>
+                  <col style="width: 44px;">
+                  <col style="width: 38%;">
+                  <col style="width: 24%;">
+                  <col style="width: 13%;">
+                  <col style="width: 13%;">
+                  <col style="width: 100px;">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="th-index">#</th>
+                    <th>Target Review URL</th>
+                    <th>Category / Action</th>
+                    <th>Status</th>
+                    <th>Progress</th>
+                    <th class="th-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="linksTableBody">
+                  <!-- Dynamic link rows or min 10 empty rows -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Links Footer Pagination -->
+            <div class="sheet-footer" id="linksPaginationBar">
+              <div class="sheet-footer-info">
+                <span id="linkPaginationInfo">Showing 0 to 0 of 0 links</span>
+              </div>
+
+              <div class="sheet-footer-controls">
+                <div class="sheet-page-size">
+                  <label for="selectLinkPageSize">Rows:</label>
+                  <select id="selectLinkPageSize" class="sheet-select-sm">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+
+                <div class="sheet-page-nav">
+                  <button class="page-nav-btn" id="btnLinkPageFirst" title="First Page" disabled>&laquo;</button>
+                  <button class="page-nav-btn" id="btnLinkPagePrev" title="Previous Page" disabled>&lsaquo;</button>
+                  <div class="page-numbers-wrap" id="linkPageNumbersContainer"></div>
+                  <button class="page-nav-btn" id="btnLinkPageNext" title="Next Page" disabled>&rsaquo;</button>
+                  <button class="page-nav-btn" id="btnLinkPageLast" title="Last Page" disabled>&raquo;</button>
+                </div>
+
+                <div class="sheet-page-jump">
+                  <label for="inputLinkPageJump">Go:</label>
+                  <input type="number" id="inputLinkPageJump" min="1" placeholder="Page" />
+                </div>
+              </div>
+            </div>
+
+
+          </div>
+        </section>
+
+
+        <!-- 6. ABOUT & LICENSING PANE -->
+        <section id="tab-about" class="pane">
+          <div class="control-layout about-container">
+
+            <!-- SOFTWARE DETAILS CARD -->
+            <div class="card about-simple-card">
+              <div class="about-brand-header">
+                <div class="about-brand-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <circle cx="12" cy="11" r="3"/>
+                  </svg>
+                </div>
+                <div class="about-brand-info">
+                  <div class="about-brand-title-wrap">
+                    <h1 class="about-brand-title">MapsShield Pro</h1>
+                    <span class="badge badge-primary">v1.2.0</span>
+                    <span class="badge badge-success">STABLE 64-BIT</span>
+                  </div>
+                  <p class="about-brand-desc">Google Maps Review Automation &amp; Anti-Detection Suite</p>
+                </div>
+              </div>
+
+              <div class="about-details-table">
+                <div class="about-detail-row">
+                  <span class="detail-label">Edition</span>
+                  <span class="detail-value">MapsShield Pro (64-bit)</span>
+                </div>
+                <div class="about-detail-row">
+                  <span class="detail-label">Platform</span>
+                  <span class="detail-value">Windows Desktop Application</span>
+                </div>
+                <div class="about-detail-row">
+                  <span class="detail-label">Machine ID</span>
+                  <div class="detail-value-with-btn">
+                    <code id="auditMachineId">Loading...</code>
+                    <button id="btnCopyMachineId" class="btn-copy-chip" title="Copy Machine ID">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="about-detail-row">
+                  <span class="detail-label">Data Directory</span>
+                  <div class="detail-value">
+                    <button id="btnAboutOpenFolder" class="btn btn-secondary btn-sm" title="Open Application Data Directory in File Explorer">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                      </svg>
+                      <span>Open App Folder</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="about-card-footer">
+                <span class="copyright-text">&copy; 2025&ndash;2026 MapsShield Pro. All rights reserved.</span>
+              </div>
+            </div>
+
+            <!-- LICENSE ACTIVATION CARD -->
+            <div class="card license-simple-card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <div class="card-title-icon text-emerald">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2>Product Activation</h2>
+                    <p class="card-subtitle">Enter your product license key to activate the software</p>
+                  </div>
+                </div>
+                <div class="license-status-badge-wrap">
+                  <span id="licStatusBadge" class="badge badge-neutral">
+                    <span class="status-dot-sm bg-sky"></span>
+                    <span id="licStatusBadgeText">COMMUNITY / TRIAL</span>
+                  </span>
+                </div>
+              </div>
+
+              <div class="license-body">
+                <!-- Key Input & Activation Bar -->
+                <div class="license-input-bar">
+                  <div class="lic-input-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="lic-input-icon">
+                      <path d="M21 2l-2 2m-1-1l-3 3m1 1l-2 2m-2-2l-7 7a2.828 2.828 0 1 1-4-4l7-7m2-2l2-2"/>
+                    </svg>
+                    <input type="text" id="licKeyInput" placeholder="Enter Product License Key..." spellcheck="false" autocomplete="off" />
+                    <button id="btnPasteLicKey" class="btn-clear-search" title="Paste from clipboard">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <button id="btnActivateKey" class="btn btn-primary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    <span>Activate</span>
+                  </button>
+                  <button id="btnUnbindKey" class="btn btn-secondary" style="display: none;" title="Deactivate this license on this device">
+                    <span>Deactivate</span>
+                  </button>
+                </div>
+
+                <div id="licNotification" class="toast-msg" style="margin-top: 10px;"></div>
+
+                <!-- Active License Display Details -->
+                <div class="active-license-details">
+                  <div class="active-key-pill">
+                    <span class="text-muted">License Key:</span>
+                    <code id="licActiveKeyDisplay">COMMUNITY-EDITION-ACTIVE</code>
+                    <button id="btnCopyActiveKey" class="btn-copy-chip" title="Copy License Key">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="active-plan-pill" style="font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                    <span>License Status:</span>
+                    <span id="licPlanType" class="text-emerald" style="font-weight: 600;">Lifetime Access</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Edit Account Modal Dialog -->
+  <div id="editAccountModal" class="modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-card-header">
+        <div class="modal-card-title">
+          <span class="modal-icon" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); color: #38bdf8;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </span>
+          <h3>Edit Google Account</h3>
+        </div>
+        <span id="closeEditModal" class="modal-close">&times;</span>
+      </div>
+      <div class="modal-card-body">
+        <div class="form-group">
+          <label for="editEmail">Email Address</label>
+          <input type="email" id="editEmail" placeholder="your_email@gmail.com" />
+        </div>
+
+        <div class="form-group">
+          <label for="editPassword">Password</label>
+          <div class="input-with-eye">
+            <input type="password" id="editPassword" placeholder="••••••••" />
+            <button type="button" id="btnToggleEditPass" class="eye-toggle-btn" title="Show / Hide Password">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="edit2fa">2FA Secret / TOTP Key</label>
+          <input type="text" id="edit2fa" placeholder="JBSWY3DPEHPK3PXP" />
+        </div>
+
+        <div class="form-group">
+          <label for="editBackupCode">Backup Code(s)</label>
+          <input type="text" id="editBackupCode" placeholder="12345678, 87654321" />
+        </div>
+
+        <div class="form-group edit-status-box">
+          <label>Account Health &amp; Error Status</label>
+          <div class="edit-status-row">
+            <div class="status-tags">
+              <span id="editUsageTag" class="badge badge-neutral">Unused</span>
+              <span id="editStatusTag" class="badge badge-success">Ready</span>
+            </div>
+            <button type="button" id="btnResetAccountStatus" class="btn btn-secondary btn-sm" title="Clear errors and reset to ready">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>Reset to Ready</span>
+            </button>
+          </div>
+          <div id="editErrorNotice" class="edit-error-banner" style="display: none;"></div>
+        </div>
+      </div>
+      <div class="modal-card-footer">
+        <button id="btnCancelEdit" class="btn btn-secondary">Cancel</button>
+        <button id="btnSaveEdit" class="btn btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span>Save Changes</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Proxy Modal Dialog -->
+  <div id="editProxyModal" class="modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-card-header">
+        <div class="modal-card-title">
+          <span class="modal-icon" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: rgba(56, 189, 248, 0.1); color: #38bdf8;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </span>
+          <h3>Edit Proxy Configuration</h3>
+        </div>
+        <span id="closeEditProxyModal" class="modal-close">&times;</span>
+      </div>
+      <div class="modal-card-body">
+        <div class="form-group" style="background: rgba(56, 189, 248, 0.06); padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(56, 189, 248, 0.2); margin-bottom: 12px;">
+          <label for="editProxyQuickString" style="color: #38bdf8; font-weight: 600; font-size: 11px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polyline></svg>
+            <span>Quick String (Paste host:port:user:pass to auto-fill)</span>
+          </label>
+          <input type="text" id="editProxyQuickString" placeholder="e.g. 198.51.100.24:8080:username:password" style="font-family: var(--font-mono, monospace); font-size: 0.8rem;" />
+        </div>
+
+        <div class="form-group">
+          <label for="editProxyProtocol">Protocol</label>
+          <select id="editProxyProtocol" class="custom-select">
+            <option value="http">HTTP</option>
+            <option value="https">HTTPS</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="editProxyHost">Host / IP Address</label>
+          <input type="text" id="editProxyHost" placeholder="e.g. 198.51.100.24" />
+        </div>
+
+        <div class="form-group">
+          <label for="editProxyPort">Port</label>
+          <input type="number" id="editProxyPort" placeholder="8080" />
+        </div>
+
+        <div class="form-group">
+          <label for="editProxyUser">Username (Optional)</label>
+          <input type="text" id="editProxyUser" placeholder="proxy_user" />
+        </div>
+
+        <div class="form-group">
+          <label for="editProxyPass">Password (Optional)</label>
+          <div class="input-with-eye">
+            <input type="password" id="editProxyPass" placeholder="••••••••" />
+            <button type="button" id="btnToggleEditProxyPass" class="eye-toggle-btn" title="Show / Hide Password">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-card-footer">
+        <button id="btnCancelEditProxy" class="btn btn-secondary">Cancel</button>
+        <button id="btnSaveEditProxy" class="btn btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span>Save Changes</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Link Modal Dialog -->
+  <div id="editLinkModal" class="modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-card-header">
+        <div class="modal-card-title">
+          <span class="modal-icon" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: rgba(56, 189, 248, 0.1); color: #38bdf8;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </span>
+          <h3>Edit Target Review Link</h3>
+        </div>
+        <span id="closeEditLinkModal" class="modal-close">&times;</span>
+      </div>
+      <div class="modal-card-body">
+        <div class="form-group">
+          <label for="editLinkUrl">Review URL</label>
+          <input type="text" id="editLinkUrl" placeholder="https://maps.app.goo.gl/..." />
+        </div>
+
+        <div class="form-group">
+          <label for="editLinkCategory">Report Category / Action</label>
+          <select id="editLinkCategory" class="custom-select">
+            <option value="ai-auto">🤖 AI Report</option>
+            <option value="legal">⚖️ AI Legal</option>
+            <option value="both">⚡ AI Dual</option>
+            <option value="offtopic">1. 🚫 Off topic</option>
+            <option value="spam">2. 🗑️ Spam</option>
+            <option value="conflict">3. ⚔️ Conflict of interest</option>
+            <option value="profanity">4. 🤬 Profanity</option>
+            <option value="harmful">5. ⚠️ Harmful</option>
+            <option value="bullying">6. 👊 Bullying or harassment</option>
+            <option value="discrimination">7. 🛑 Discrimination or hate speech</option>
+            <option value="personal_info">8. 🔒 Personal information</option>
+            <option value="not_helpful">9. ❓ Not helpful</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="editLinkTargetCount">Target Reports Needed</label>
+          <input type="number" id="editLinkTargetCount" min="1" value="1" placeholder="e.g. 5" />
+        </div>
+      </div>
+      <div class="modal-card-footer">
+        <button id="btnCancelEditLink" class="btn btn-secondary">Cancel</button>
+        <button id="btnSaveEditLink" class="btn btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span>Save Changes</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Lightbox Modal -->
+  <div id="proofModal" class="modal">
+    <div class="modal-content">
+      <span id="modalClose" class="modal-close">&times;</span>
+      <img id="modalImg" src="" alt="Proof Full View" />
+    </div>
+  </div>
+
+  <!-- Modular Frontend Architecture -->
+  <script src="js/utils/helpers.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/components/about.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

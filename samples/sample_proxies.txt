@@ -1,0 +1,6 @@
+# CherryProxy / NodeMaven / GoLogin Bulk Proxy List Format
+142.250.190.46:8000:cherry_user:cherry_pass123
+185.220.101.5:3128:nodemaven_usr:nodemaven_p456
+198.51.100.24:8080:smart_user:pass789
+socks5://proxyuser:proxypass@192.168.1.50:1080
+172.67.182.11:8080

@@ -1,6 +1,38 @@
+# Dependencies
 node_modules/
+package-lock.json
+
+# Environment and Credentials
 .env
+.env.local
+*.env
+
+# Runtime / Session Data
 chrome_session/
-error_screenshot.png
-*.png
+chrome_sessions/
 *.log
+npm-debug.log*
+yarn-debug.log*
+
+# SQLite Database and User Data
+*.sqlite
+*.sqlite*
+database/*.sqlite*
+accounts.json
+review_links.json
+proxies.json
+
+# Auto-generated Admin Records
+scripts/generated_licenses.json
+
+# Temporary / Output Files
+*.png
+*.jpg
+*.jpeg
+dist/
+build/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini

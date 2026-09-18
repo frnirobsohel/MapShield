@@ -1,0 +1,6 @@
+proxy,protocol
+142.250.190.46:8000:cherry_user:cherry_pass123,http
+185.220.101.5:3128:nodemaven_usr:nodemaven_p456,http
+198.51.100.24:8080:smart_user:pass789,https
+192.168.1.50:1080:socks_user:socks_pass,socks5
+172.67.182.11:8080,,
