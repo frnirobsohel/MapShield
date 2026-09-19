@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   getLinks: () => ipcRenderer.invoke('links:get'),
   saveLinks: (links) => ipcRenderer.invoke('links:save', links),
   openExternalUrl: (url) => ipcRenderer.invoke('url:open', url),
+  inspectLinkWithAi: (id, url) => ipcRenderer.invoke('links:ai-inspect', { id, url }),
 
   clearSession: () => ipcRenderer.invoke('session:clear'),
   checkSessionStatus: () => ipcRenderer.invoke('session:status'),

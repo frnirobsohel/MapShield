@@ -24,6 +24,11 @@ const {
   clickGoogleNext,
   handleConsentIfPresent
 } = require('../helpers/dom_utils');
+const {
+  generateTOTP,
+  isValidSecret,
+  getRemainingSeconds
+} = require('./totp');
 
 /**
  * Checks whether current screen is the actual 8-digit backup code screen
@@ -51,6 +56,37 @@ async function isActualBackupCodePage(page) {
     }).catch(() => false);
 
     return hasInput;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Checks whether current screen is the Google Authenticator 6-digit TOTP input screen
+ */
+async function isActualTotpPage(page) {
+  try {
+    const url = page.url();
+    if (url.includes('/challenge/selection') || url.includes('/selection')) {
+      return false;
+    }
+
+    const hasTotpInput = await page.evaluate(() => {
+      const direct = document.querySelector('input#totpPin, input[name="totpPin"]');
+      if (direct) return true;
+
+      const anyInput = document.querySelector('input[type="tel"], input[type="text"], input[autocomplete="one-time-code"]');
+      if (!anyInput) return false;
+
+      const text = (document.body.innerText || '').toLowerCase();
+      const mentionsTotp = text.includes('authenticator') || (text.includes('enter code') && !text.includes('8-digit'));
+      const notSc = !text.includes('g.co/sc') && !text.includes('get your security code');
+      const notBackup = !text.includes('8-digit') && !text.includes('backup code');
+
+      return mentionsTotp && notSc && notBackup;
+    }).catch(() => false);
+
+    return hasTotpInput;
   } catch (e) {
     return false;
   }
@@ -250,6 +286,128 @@ async function getBackupCodeOptionHandle(page) {
 }
 
 /**
+ * Finds the "Get a verification code from Google Authenticator" element handle
+ */
+async function getAuthenticatorOptionHandle(page) {
+  const xpathQueries = [
+    "::-p-xpath(//li[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'authenticator')])",
+    "::-p-xpath(//div[@data-challengetype='6'])",
+    "::-p-xpath(//li[@data-challengetype='6'])",
+    "::-p-xpath(//div[@role='link'][contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'authenticator')])",
+    "::-p-xpath(//div[@role='button'][contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'authenticator')])",
+    "::-p-xpath(//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'google authenticator')])",
+    "::-p-xpath(//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'authenticator app')])"
+  ];
+
+  for (const xp of xpathQueries) {
+    try {
+      const elements = await page.$$(xp);
+      for (const el of elements) {
+        const isVisible = await page.evaluate(node => {
+          const rect = node.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && window.getComputedStyle(node).visibility !== 'hidden';
+        }, el).catch(() => false);
+        if (isVisible) return el;
+      }
+    } catch (e) {}
+  }
+
+  const handle = await page.evaluateHandle(() => {
+    const candidates = Array.from(document.querySelectorAll('li, div[role="link"], div[role="button"], div[data-challengetype], [data-challengeindex]'));
+    for (const el of candidates) {
+      const text = (el.innerText || el.textContent || '').toLowerCase();
+      if (text.includes('authenticator')) {
+        return el;
+      }
+    }
+
+    const all = Array.from(document.querySelectorAll('span, div, p, h2, h3'));
+    for (const el of all) {
+      const text = (el.innerText || el.textContent || '').toLowerCase().trim();
+      if (text.includes('authenticator') && text.length < 120) {
+        return el.closest('li, div[role="link"], div[role="button"], [data-challengetype]') || el;
+      }
+    }
+    return null;
+  });
+
+  if (handle && handle.asElement()) {
+    return handle.asElement();
+  }
+
+  return null;
+}
+
+/**
+ * Selects the Google Authenticator option with physical mouse click and event dispatching
+ */
+async function selectAuthenticatorOption(page, cursor, smartClick) {
+  console.log('🔍 Searching verification list for "Google Authenticator" option...');
+
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    await sleep(800);
+
+    const optionHandle = await getAuthenticatorOptionHandle(page);
+    if (optionHandle) {
+      console.log(`🎯 [Attempt ${attempt}] Google Authenticator option found! Clicking automatically...`);
+
+      await optionHandle.evaluate(el => el.scrollIntoView({ behavior: 'auto', block: 'center' })).catch(() => {});
+      await sleep(250);
+
+      const box = await optionHandle.boundingBox();
+      if (box) {
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+
+        if (cursor && typeof cursor.moveTo === 'function') {
+          await cursor.moveTo({ x, y }).catch(() => {});
+        }
+        await page.mouse.move(x, y, { steps: 5 });
+        await sleep(100);
+        await page.mouse.down();
+        await sleep(80);
+        await page.mouse.up();
+        console.log(`🖱️ Physical click sent to Authenticator option at (${Math.round(x)}, ${Math.round(y)})!`);
+      }
+
+      await optionHandle.evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const eventOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+
+        el.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
+        el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+        el.focus();
+        el.dispatchEvent(new PointerEvent('pointerup', eventOpts));
+        el.dispatchEvent(new MouseEvent('mouseup', eventOpts));
+        el.click();
+
+        const inner = el.querySelector('a, button, [role="link"], [role="button"]');
+        if (inner && inner !== el) {
+          inner.click();
+        }
+      }).catch(() => {});
+
+      if (smartClick) await smartClick(optionHandle).catch(() => {});
+      await optionHandle.click().catch(() => {});
+
+      await sleep(2500);
+
+      const isNavigated = await isActualTotpPage(page);
+      if (isNavigated) {
+        console.log('✅ Successfully clicked "Google Authenticator" and opened TOTP code input page!');
+        return true;
+      } else {
+        console.log('⏳ Authenticator input page has not loaded yet, retrying...');
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Selects the 8-digit Backup Code option with physical mouse click and event dispatching
  */
 async function selectBackupCodeOption(page, cursor, smartClick) {
@@ -346,6 +504,35 @@ async function findBackupCodeInput(page) {
 }
 
 /**
+ * Finds the Google Authenticator 6-digit input element on the page
+ */
+async function findTotpInput(page) {
+  const selectors = [
+    'input#totpPin',
+    'input[name="totpPin"]',
+    'input[autocomplete="one-time-code"]',
+    'input[id*="Pin"]',
+    'input[name*="Pin"]',
+    'input[type="tel"]',
+    'input[type="text"]'
+  ];
+
+  for (const sel of selectors) {
+    try {
+      const input = await page.$(sel);
+      if (input) {
+        const isVisible = await page.evaluate(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+        }, input).catch(() => false);
+        if (isVisible) return input;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+/**
  * Detects current page status during Google sign-in sequence
  */
 async function detectCurrentPageStatus(page, targetEmail) {
@@ -414,7 +601,14 @@ async function detectCurrentPageStatus(page, targetEmail) {
       if (text.includes('too many failed attempts') || text.includes('try again in a few hours') || text.includes('account has been disabled') || text.includes('account disabled')) {
         return { type: 'ACCOUNT_LOCKED', description: 'Account temporarily locked or disabled by Google' };
       }
-      if (text.includes('wrong code. try again') || text.includes('this code was already used') || text.includes('code was already used')) {
+      const hasTotp = !!document.querySelector('input#totpPin, input[name="totpPin"]');
+      if (text.includes('this code was already used') || text.includes('code was already used')) {
+        return { type: 'INVALID_BACKUP_CODE', description: 'Backup code was already used or invalid' };
+      }
+      if (text.includes('wrong code. try again') || text.includes('wrong code')) {
+        if (hasTotp) {
+          return { type: 'INVALID_TOTP_CODE', description: 'TOTP code was incorrect or expired' };
+        }
         return { type: 'INVALID_BACKUP_CODE', description: 'Backup code was already used or invalid' };
       }
       return null;
@@ -500,19 +694,26 @@ async function detectCurrentPageStatus(page, targetEmail) {
       const u = window.location.href;
       const text = (document.body.innerText || '').toLowerCase();
       const hasBackupInput = !!document.querySelector('input#backupCodePin, input[name="backupCode"]');
+      const hasTotpInput = !!document.querySelector('input#totpPin, input[name="totpPin"]');
       const mentionsBackup = text.includes('backup') || text.includes('8-digit');
+      const mentionsTotp = text.includes('authenticator');
       const isSelectionUrl = u.includes('/challenge/selection') || u.includes('/selection');
       const hasMultipleChallenges = Array.from(document.querySelectorAll('li, div[role="link"], div[role="button"]')).some(el => {
         const t = (el.innerText || el.textContent || '').toLowerCase();
-        return t.includes('backup') && t.includes('code');
+        return (t.includes('backup') && t.includes('code')) || t.includes('authenticator');
       });
       const mentionsChooseWay = text.includes('choose how you want to sign in');
 
-      if (isSelectionUrl || (mentionsBackup && hasMultipleChallenges && !hasBackupInput) || (mentionsChooseWay && mentionsBackup)) {
+      if (isSelectionUrl || ((mentionsBackup || mentionsTotp) && hasMultipleChallenges && !hasBackupInput && !hasTotpInput) || (mentionsChooseWay && (mentionsBackup || mentionsTotp))) {
         return '2FA_OPTIONS_LIST';
       }
 
-      const anyInput = !!document.querySelector('input#backupCodePin, input[name="backupCode"], input[autocomplete="one-time-code"], input[type="tel"], input[type="text"]');
+      const anyInput = !!document.querySelector('input#backupCodePin, input[name="backupCode"], input#totpPin, input[name="totpPin"], input[autocomplete="one-time-code"], input[type="tel"], input[type="text"]');
+
+      if (hasTotpInput || (mentionsTotp && !isSelectionUrl && anyInput && !text.includes('g.co/sc') && !mentionsBackup)) {
+        return '2FA_TOTP_INPUT';
+      }
+
       if (hasBackupInput || (mentionsBackup && !isSelectionUrl && anyInput && (text.includes('8-digit') || text.includes('backup code')))) {
         return '2FA_BACKUP_INPUT';
       }
@@ -534,6 +735,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
     });
 
     if (challengeInfo === '2FA_OPTIONS_LIST') return { type: '2FA_OPTIONS_LIST', description: 'Verification options list page' };
+    if (challengeInfo === '2FA_TOTP_INPUT') return { type: '2FA_TOTP_INPUT', description: 'Google Authenticator 6-digit TOTP code input page' };
     if (challengeInfo === '2FA_BACKUP_INPUT') return { type: '2FA_BACKUP_INPUT', description: '8-digit backup code input page' };
     if (challengeInfo === '2FA_G_CO_SC') return { type: '2FA_G_CO_SC', description: 'Security code (g.co/sc) page -> Try another way' };
     if (challengeInfo === '2FA_OTHER' || url.includes('/challenge/')) return { type: '2FA_OTHER', description: '2-Step verification page -> Try another way' };
@@ -715,6 +917,7 @@ async function ensureGoogleLoggedIn({
   currentCursor,
   email,
   password,
+  twoFactor,
   getBackupCode,
   smartClick,
   syncActiveTab
@@ -876,21 +1079,90 @@ async function ensureGoogleLoggedIn({
         break;
       }
 
+      case 'INVALID_TOTP_CODE': {
+        console.warn('⚠️ [Page Decision] Submitted TOTP code was rejected or expired. Clicking "Try another way" for fallback...');
+        await clickTryAnotherWay(currentTab, currentCursor, click);
+        await sleep(2500);
+        break;
+      }
+
       case '2FA_OPTIONS_LIST': {
-        console.log('📋 [Page Decision] Alternative verification list. Selecting "Enter one of your 8-digit backup codes"...');
-        const optionClicked = await selectBackupCodeOption(currentTab, currentCursor, click);
-        if (optionClicked) {
-          console.log('⏳ Waiting for backup code input page to load...');
-          for (let waitSec = 0; waitSec < 6; waitSec++) {
-            await sleep(1000);
-            if (syncActiveTab) await syncActiveTab();
-            const nextStatus = await detectCurrentPageStatus(currentTab, email);
-            if (nextStatus.type === '2FA_BACKUP_INPUT') {
-              break;
+        console.log('📋 [Page Decision] Alternative verification list options loaded.');
+        let optionClicked = false;
+
+        // Priority 1: Google Authenticator (if twoFactor secret is provided and valid)
+        if (twoFactor && isValidSecret(twoFactor)) {
+          console.log('📱 2FA Secret Key detected! Selecting "Google Authenticator" option...');
+          optionClicked = await selectAuthenticatorOption(currentTab, currentCursor, click);
+          if (optionClicked) {
+            console.log('⏳ Waiting for Authenticator 6-digit code page to load...');
+            for (let waitSec = 0; waitSec < 6; waitSec++) {
+              await sleep(1000);
+              if (syncActiveTab) await syncActiveTab();
+              const nextStatus = await detectCurrentPageStatus(currentTab, email);
+              if (nextStatus.type === '2FA_TOTP_INPUT') {
+                break;
+              }
             }
+          } else {
+            console.log('⚠️ Google Authenticator option not found or could not be clicked. Falling back to backup code...');
+          }
+        }
+
+        // Priority 2 / Fallback: 8-digit Backup code
+        if (!optionClicked) {
+          console.log('🔑 Selecting "Enter one of your 8-digit backup codes"...');
+          const backupClicked = await selectBackupCodeOption(currentTab, currentCursor, click);
+          if (backupClicked) {
+            console.log('⏳ Waiting for backup code input page to load...');
+            for (let waitSec = 0; waitSec < 6; waitSec++) {
+              await sleep(1000);
+              if (syncActiveTab) await syncActiveTab();
+              const nextStatus = await detectCurrentPageStatus(currentTab, email);
+              if (nextStatus.type === '2FA_BACKUP_INPUT') {
+                break;
+              }
+            }
+          } else {
+            await sleep(2000);
+          }
+        }
+        break;
+      }
+
+      case '2FA_TOTP_INPUT': {
+        console.log('🔢 [Page Decision] Google Authenticator 6-digit code page. Preparing TOTP code...');
+        if (twoFactor && isValidSecret(twoFactor)) {
+          const totpCode = generateTOTP(twoFactor);
+          const remaining = getRemainingSeconds();
+          console.log(`🔐 Generated 6-digit TOTP code: [${totpCode}] (~${remaining}s remaining in window)`);
+
+          const field = await findTotpInput(currentTab);
+          if (field) {
+            await click(field);
+            await sleep(250);
+
+            await currentTab.keyboard.down('Control');
+            await currentTab.keyboard.press('KeyA');
+            await currentTab.keyboard.up('Control');
+            await currentTab.keyboard.press('Backspace');
+            await sleep(200);
+
+            console.log(`⌨️  Typing 6-digit TOTP code...`);
+            await humanType(currentTab, totpCode, { canMakeMistakes: false });
+            await sleep(1000);
+
+            console.log('👉 Clicking Next button to submit TOTP code...');
+            await clickGoogleNext(currentTab, 'totpNext', currentCursor, syncActiveTab);
+            await sleep(4000);
+          } else {
+            console.log('⚠️ TOTP input field not found. Retrying in 2 seconds...');
+            await sleep(2000);
           }
         } else {
-          await sleep(2000);
+          console.log('⚠️ No valid 2FA Secret key available for TOTP code! Falling back to "Try another way"...');
+          await clickTryAnotherWay(currentTab, currentCursor, click);
+          await sleep(2500);
         }
         break;
       }
@@ -949,10 +1221,15 @@ module.exports = {
   ensureGoogleLoggedIn,
   detectCurrentPageStatus,
   isActualBackupCodePage,
+  isActualTotpPage,
   clickTryAnotherWay,
   selectBackupCodeOption,
+  selectAuthenticatorOption,
   findBackupCodeInput,
+  findTotpInput,
   handleLandingPageIfPresent,
   handleGooglePostLoginPrompts,
-  naturalBrowseToGmail
+  naturalBrowseToGmail,
+  generateTOTP,
+  isValidSecret
 };

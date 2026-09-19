@@ -240,14 +240,26 @@ async function runMapsReporter({
   }
 
   // --------------------------------------------------------------------------
-  // [Step 0] AI Inspection & Smart Decision (if enabled)
+  // [Step 0] Violation Category & Report Setup
   // --------------------------------------------------------------------------
   let activeReason = (reportReason || 'spam').toLowerCase();
   let activeType = (reportType || 'standard').toLowerCase();
+
+  // If reason is a multi-category list (e.g. "bullying, conflict, not_helpful"), pick one randomly
+  if (activeReason.includes(',')) {
+    const list = activeReason.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (list.length > 0) {
+      activeReason = list[Math.floor(Math.random() * list.length)];
+      console.log(`🎲 [Category Rotation]: Selected "${activeReason.toUpperCase()}" from [${list.join(', ')}]`);
+    }
+  }
+
   let shouldExecuteLegalNotice = activeType === 'both' || activeType === 'legal' || activeReason === 'legal';
   let details = null;
 
-  const isAiRequested = activeReason === 'ai-auto' || aiOptions?.aiInspection || process.env.AI_INSPECTION === 'true';
+  // AI is ONLY called during execution if reason was NOT pre-selected (i.e. explicitly 'ai-auto')
+  // For pre-selected categories, AI runs $0.00 zero tokens during live reporting
+  const isAiRequested = activeReason === 'ai-auto';
 
   if (isAiRequested || shouldExecuteLegalNotice) {
     console.log('\n🤖 [AI Inspection] Inspecting review text & metadata from page...');
@@ -257,7 +269,7 @@ async function runMapsReporter({
     const provider = aiOptions?.aiProvider || process.env.AI_PROVIDER || 'gemini';
     const model = aiOptions?.aiModel || process.env.AI_MODEL;
 
-    if (apiKey) {
+    if (apiKey && isAiRequested) {
       const aiDecision = await analyzeReviewWithAI({
         reviewText: details.reviewText,
         reviewerName: details.reviewerName,
@@ -275,7 +287,7 @@ async function runMapsReporter({
         shouldExecuteLegalNotice = true;
       }
       console.log(`✨ [AI Decision Applied] Violation Category: "${activeReason.toUpperCase()}" (Mode: ${activeType.toUpperCase()})\n`);
-    } else {
+    } else if (isAiRequested) {
       if (activeReason === 'ai-auto') {
         console.log('ℹ️ No AI API Key provided; using default reason: "spam".\n');
         activeReason = 'spam';

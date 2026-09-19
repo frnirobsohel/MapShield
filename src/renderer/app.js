@@ -92,7 +92,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`,
     ping: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>`,
     external: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>`,
-    copy: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`
+    copy: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
+    sparkles: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path></svg>`,
+    spinner: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin-animation"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`
   };
 
   // Control Elements: Browser Selection & Report Mode
@@ -828,7 +830,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update Pagination Bar UI
     renderPaginationControls(startIndex, endIndex, totalItems, totalPages);
-    scheduleDashboardMetrics();
+    updateDashboardMetrics();
   }
 
   function renderPaginationControls(start, end, total, totalPages) {
@@ -1298,6 +1300,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Safe alias for backward compatibility
+  function scheduleDashboardMetrics() {
+    updateDashboardMetrics();
+  }
+
   if (inputReviewUrls) {
     inputReviewUrls.addEventListener('input', updateDashboardMetrics);
   }
@@ -1308,7 +1315,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const MAX_TERMINAL_LINES = 600;
 
   function appendLogToBothTerminals(text, isErr = false) {
-    const lines = text.split('\n');
+    if (text === undefined || text === null) return;
+    const lines = String(text).split('\n');
     lines.forEach(line => {
       if (!line && lines.length > 1) return;
 
@@ -1376,7 +1384,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function loadAppConfig() {
     if (!window.desktopAPI) return;
     try {
-      appConfig = await window.desktopAPI.getConfig();
+      const configRes = await window.desktopAPI.getConfig();
+      appConfig = (configRes && configRes.data) ? configRes.data : (configRes || {});
+      delete appConfig.data;
+      delete appConfig.success;
 
       // Review URLs (Legacy Support)
       if (inputReviewUrls) {
@@ -1399,7 +1410,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       if (appConfig.aiApiKey && inputAiKey) inputAiKey.value = appConfig.aiApiKey;
       if (appConfig.aiModel && selectAiModel) selectAiModel.value = appConfig.aiModel;
-      if (appConfig.aiInspection !== undefined && checkAiInspection) checkAiInspection.checked = appConfig.aiInspection;
+      if (appConfig.aiInspection !== undefined && checkAiInspection) checkAiInspection.checked = !!appConfig.aiInspection;
 
       // Load Installed Browsers asynchronously in the background (zero blocking)
       loadInstalledBrowsers(appConfig.browserPath);
@@ -1449,7 +1460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       mode: currentReportType,
       reason: selectCategory.value
     }));
-    const configObj = {
+    const payload = {
       ...appConfig,
       urls: urls,
       defaultUrl: urls[0]?.url || '',
@@ -1457,12 +1468,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       reportType: currentReportType,
       browserPath: (browserChecklist?.querySelector('input[name="selectedBrowser"]:checked')?.value) || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
     };
-    const res = await window.desktopAPI.saveConfig(configObj);
-    if (res.success) {
+    delete payload.data;
+    delete payload.success;
+
+    const res = await window.desktopAPI.saveConfig(payload);
+    if (res && res.success) {
+      Object.assign(appConfig, payload);
       updateDashboardMetrics();
       showToast(reporterToast, `✅ ${urls.length} link(s) saved to target queue!`);
     } else {
-      showToast(reporterToast, '❌ Error: ' + res.error, false);
+      showToast(reporterToast, '❌ Error: ' + (res?.error || 'Failed to save'), false);
     }
   });
 
@@ -1474,17 +1489,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Save AI Configuration
   btnSaveAi?.addEventListener('click', async () => {
     if (!window.desktopAPI) return;
-    const res = await window.desktopAPI.saveConfig({
-      ...appConfig,
+    const aiData = {
       aiProvider: selectAiProvider?.value || 'gemini',
-      aiApiKey: inputAiKey.value.trim(),
-      aiModel: selectAiModel.value,
-      aiInspection: checkAiInspection.checked
-    });
-    if (res.success) {
+      aiApiKey: inputAiKey?.value.trim() || '',
+      aiModel: selectAiModel?.value || 'gemini-2.0-flash',
+      aiInspection: !!checkAiInspection?.checked
+    };
+    const payload = {
+      ...appConfig,
+      ...aiData
+    };
+    delete payload.data;
+    delete payload.success;
+
+    const res = await window.desktopAPI.saveConfig(payload);
+    if (res && res.success) {
+      Object.assign(appConfig, aiData);
       showToast(aiToast, '✅ AI Engine configuration saved successfully!');
     } else {
-      showToast(aiToast, '❌ Error: ' + res.error, false);
+      showToast(aiToast, '❌ Error: ' + (res?.error || 'Failed to save'), false);
     }
   });
 
@@ -2663,17 +2686,54 @@ document.addEventListener('DOMContentLoaded', async () => {
       const m = (lnk.mode || 'standard').toLowerCase();
       const r = (lnk.reason || 'spam').toLowerCase();
 
-      if (m === 'both') {
+      const labels = {
+        offtopic: '🚫 Off topic',
+        spam: '🗑️ Spam',
+        conflict: '⚔️ Conflict',
+        profanity: '🤬 Profanity',
+        harmful: '⚠️ Harmful',
+        bullying: '👊 Bullying',
+        discrimination: '🛑 Discrimination',
+        personal_info: '🔒 Personal info',
+        not_helpful: '❓ Not helpful'
+      };
+
+      if (r.includes(',')) {
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.gap = '4px';
+        wrap.style.flexWrap = 'wrap';
+        wrap.style.alignItems = 'center';
+        const parts = r.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        for (const p of parts) {
+          const badge = document.createElement('span');
+          badge.className = (p === 'harmful' || p === 'profanity' || p === 'bullying' || p === 'discrimination')
+            ? 'sheet-tag tag-rose'
+            : 'sheet-tag tag-blue';
+          badge.style.fontSize = '10.5px';
+          badge.style.padding = '1px 5px';
+          badge.textContent = labels[p] || p;
+          wrap.appendChild(badge);
+        }
+        tdCat.appendChild(wrap);
+      } else if (m === 'both') {
+        const catTag = document.createElement('span');
         catTag.className = 'sheet-tag tag-purple';
         catTag.textContent = '⚡ AI Dual';
+        tdCat.appendChild(catTag);
       } else if (m === 'legal' || r === 'legal') {
+        const catTag = document.createElement('span');
         catTag.className = 'sheet-tag tag-purple';
         catTag.textContent = '⚖️ AI Legal';
+        tdCat.appendChild(catTag);
       } else if (r === 'ai-auto') {
+        const catTag = document.createElement('span');
         catTag.className = 'sheet-tag tag-blue';
         catTag.textContent = '🤖 AI Report';
+        tdCat.appendChild(catTag);
       } else {
-        const labels = {
+        const catTag = document.createElement('span');
+        const labelsWithNum = {
           offtopic: '1. 🚫 Off topic',
           spam: '2. 🗑️ Spam',
           conflict: '3. ⚔️ Conflict',
@@ -2687,9 +2747,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         catTag.className = (r === 'harmful' || r === 'profanity' || r === 'bullying' || r === 'discrimination')
           ? 'sheet-tag tag-rose'
           : 'sheet-tag tag-neutral';
-        catTag.textContent = labels[r] || (lnk.reason ? lnk.reason.toUpperCase() : 'Spam');
+        catTag.textContent = labelsWithNum[r] || (lnk.reason ? lnk.reason.toUpperCase() : 'Spam');
+        tdCat.appendChild(catTag);
       }
-      tdCat.appendChild(catTag);
       tr.appendChild(tdCat);
 
       // 5. Status
@@ -2768,6 +2828,77 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       actionsWrap.appendChild(btnOpen);
 
+      // AI Generate (Analyze Top 3 Categories)
+      const btnAi = document.createElement('button');
+      btnAi.className = 'sheet-icon-btn';
+      btnAi.title = '✨ AI Generate (Pre-select Top 3 Categories)';
+      btnAi.style.color = '#c084fc';
+      btnAi.innerHTML = SVG_ICONS.sparkles;
+      btnAi.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (btnAi.disabled) return;
+        btnAi.disabled = true;
+        btnAi.innerHTML = SVG_ICONS.spinner;
+
+        const currentProvider = (selectAiProvider?.value || appConfig.aiProvider || 'gemini').toUpperCase();
+        const currentModel = selectAiModel?.value || appConfig.aiModel || 'default';
+
+        appendLogToBothTerminals('\n' + '═'.repeat(60));
+        appendLogToBothTerminals(`🤖 [AI Review Inspector]: Starting intelligent analysis...`);
+        appendLogToBothTerminals(`🌐 Target URL: ${lnk.url}`);
+        appendLogToBothTerminals(`⚙️ Engine: ${currentProvider} | Model: ${currentModel}`);
+        appendLogToBothTerminals(`⏳ Launching headless browser to fetch live review content...`);
+
+        showToast(reporterToast, '🤖 AI inspecting review link... (~5-8s)');
+
+        try {
+          const res = await window.desktopAPI.inspectLinkWithAi(lnk.id, lnk.url);
+          if (res && res.success) {
+            lnk.reason = res.reason;
+            if (res.links && Array.isArray(res.links)) {
+              loadedLinks = res.links;
+            } else {
+              const targetIdx = loadedLinks.findIndex(item => item.id === lnk.id);
+              if (targetIdx !== -1) loadedLinks[targetIdx].reason = res.reason;
+              await saveLoadedLinks();
+            }
+            renderLinksTable();
+
+            const reviewText = res.reviewDetails?.reviewText;
+            const reviewerName = res.reviewDetails?.reviewerName || 'Anonymous';
+            const rating = res.reviewDetails?.rating || 'N/A';
+
+            if (reviewText) {
+              const snippet = reviewText.length > 160 ? reviewText.slice(0, 160) + '...' : reviewText;
+              appendLogToBothTerminals(`📝 Review Content: "${snippet}"`);
+              appendLogToBothTerminals(`👤 Reviewer: ${reviewerName} | Rating: ${rating}`);
+            } else {
+              appendLogToBothTerminals(`📝 Review has no text body (Rating only: ${rating})`);
+            }
+
+            appendLogToBothTerminals(`🎯 AI Selected Categories: [${res.categories.join(', ')}]`);
+            appendLogToBothTerminals(`💡 AI Policy Reasoning: ${res.reasoning || 'Evaluated against Google Maps content guidelines'}`);
+            appendLogToBothTerminals(`💾 Saved multi-category rotation rule to database successfully!`);
+            appendLogToBothTerminals('═'.repeat(60) + '\n');
+
+            showToast(reporterToast, `✨ AI Pre-Selected: [${res.categories.join(', ')}]`);
+          } else {
+            const errMsg = res?.message || 'Failed to inspect link with AI';
+            appendLogToBothTerminals(`❌ [AI Inspection Failed]: ${errMsg}`, true);
+            appendLogToBothTerminals('═'.repeat(60) + '\n');
+            showToast(reporterToast, `❌ ${errMsg}`, false);
+          }
+        } catch (err) {
+          appendLogToBothTerminals(`❌ [AI Inspection Error]: ${err.message}`, true);
+          appendLogToBothTerminals('═'.repeat(60) + '\n');
+          showToast(reporterToast, `❌ AI Error: ${err.message}`, false);
+        } finally {
+          btnAi.disabled = false;
+          btnAi.innerHTML = SVG_ICONS.sparkles;
+        }
+      });
+      actionsWrap.appendChild(btnAi);
+
       // Edit Button
       const btnEdit = document.createElement('button');
       btnEdit.className = 'sheet-icon-btn';
@@ -2818,7 +2949,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     linksTableBody.appendChild(linkFragment);
 
     renderLinksPagination(totalItems, totalPages);
-    scheduleDashboardMetrics();
+    updateDashboardMetrics();
   }
 
   function renderLinksPagination(totalItems, totalPages) {
@@ -3226,13 +3357,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function updateProgressText(statusText, percent) {
-    if (dashProgressText) dashProgressText.textContent = statusText;
-    if (dashProgressPercent) dashProgressPercent.textContent = percent + '%';
-    if (dashProgressBar) dashProgressBar.style.width = percent + '%';
+    const text = (statusText !== undefined && statusText !== null && String(statusText).trim() !== '') ? String(statusText) : 'Ready to start';
+    const pct = typeof percent === 'number' ? percent : (parseInt(percent, 10) || 0);
 
-    if (controlProgressStatus) controlProgressStatus.textContent = statusText;
-    if (controlProgressPercent) controlProgressPercent.textContent = percent + '%';
-    if (controlProgressBar) controlProgressBar.style.width = percent + '%';
+    if (dashProgressText) dashProgressText.textContent = text;
+    if (dashProgressPercent) dashProgressPercent.textContent = pct + '%';
+    if (dashProgressBar) dashProgressBar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+
+    if (controlProgressStatus) controlProgressStatus.textContent = text;
+    if (controlProgressPercent) controlProgressPercent.textContent = pct + '%';
+    if (controlProgressBar) controlProgressBar.style.width = Math.min(100, Math.max(0, pct)) + '%';
   }
 
   function finishExecution() {
@@ -3274,7 +3408,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     window.desktopAPI.onFinished((data) => {
-      appendLogToBothTerminals(`\n[System] Task exited with code ${data.code}.`);
+      const exitCode = (data && data.code !== undefined && data.code !== null) ? data.code : 0;
+      appendLogToBothTerminals(`\n[System] Task execution completed (exit code: ${exitCode}).`);
       finishExecution();
     });
 

@@ -218,7 +218,7 @@ function registerSystemIpc({ mainWindow, app, getDatabase }) {
     try {
       const db = getDatabase();
       const settings = db.getSettings();
-      return { success: true, data: settings };
+      return { success: true, data: settings, ...settings };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -227,7 +227,10 @@ function registerSystemIpc({ mainWindow, app, getDatabase }) {
   ipcMain.handle('config:save', async (event, data) => {
     try {
       const db = getDatabase();
-      db.saveSettings(data);
+      const cleanData = { ...(data || {}) };
+      delete cleanData.data;
+      delete cleanData.success;
+      db.saveSettings(cleanData);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };

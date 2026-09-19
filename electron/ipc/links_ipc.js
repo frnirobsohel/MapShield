@@ -176,6 +176,108 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
       return { success: false, error: err.message };
     }
   });
+
+  // IPC: Inspect Review Link with AI to pre-select top 1 to 3 violation categories
+  ipcMain.handle('links:ai-inspect', async (event, { id, url }) => {
+    try {
+      if (!url) {
+        return { success: false, message: 'Review URL is missing.' };
+      }
+
+      const db = getDatabase();
+      const settings = db.getSettings();
+      const apiKey = settings.aiApiKey || process.env.AI_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+
+      if (!apiKey) {
+        return {
+          success: false,
+          message: 'AI API Key not found. Please add your Gemini, OpenAI, or DeepSeek API key in Settings first.'
+        };
+      }
+
+      const BrowserManager = require(path.join(__dirname, '../../modules/browser/browser_manager'));
+      const { extractReviewDetails, analyzeReviewMultiCategoriesWithAI } = require(path.join(__dirname, '../../modules/ai/ai_reviewer'));
+
+      let details = { reviewText: '', reviewerName: 'Anonymous', rating: 'Unknown' };
+      let browser = null;
+
+      try {
+        const browserPath = settings.browserPath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        const bm = new BrowserManager();
+        const launched = await bm.launch({
+          browserPath,
+          headless: true,
+          useTempProfile: true,
+          args: ['--window-size=1280,800', '--disable-gpu']
+        });
+        browser = launched.browser;
+        const page = launched.page || (await browser.newPage());
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
+        details = await extractReviewDetails(page);
+      } catch (browserErr) {
+        console.warn('⚠️ Headless review detail extraction error:', browserErr.message);
+      } finally {
+        if (browser) {
+          try { await browser.close(); } catch (e) {}
+        }
+      }
+
+      // Call AI Multi-Category Analysis
+      const aiResult = await analyzeReviewMultiCategoriesWithAI({
+        reviewText: details.reviewText,
+        reviewerName: details.reviewerName,
+        rating: details.rating,
+        provider: settings.aiProvider || 'gemini',
+        apiKey,
+        model: settings.aiModel
+      });
+
+      // If AI call encountered an error (e.g. 401 unauthorized, network fail)
+      if (aiResult.reasoning && aiResult.reasoning.startsWith('AI Error:')) {
+        return {
+          success: false,
+          message: aiResult.reasoning,
+          categories: ['spam', 'conflict', 'offtopic'],
+          reason: 'spam, conflict, offtopic',
+          reasoning: aiResult.reasoning,
+          reviewDetails: details
+        };
+      }
+
+      const categories = aiResult.categories && aiResult.categories.length > 0 ? aiResult.categories : ['spam', 'conflict', 'offtopic'];
+      const reasonStr = categories.join(', ');
+
+      // Save categories to SQLite review_links
+      let updatedLinks = [];
+      try {
+        const links = db.getLinks() || [];
+        for (const l of links) {
+          if (l.id === id || l.url === url) {
+            l.reason = reasonStr;
+          }
+        }
+        db.saveLinks(links, true);
+        updatedLinks = links;
+      } catch (saveErr) {
+        console.warn('⚠️ Failed to save updated link reason to DB:', saveErr.message);
+      }
+
+      return {
+        success: true,
+        id,
+        url,
+        categories,
+        reason: reasonStr,
+        reasoning: aiResult.reasoning,
+        reviewDetails: details,
+        links: updatedLinks
+      };
+    } catch (err) {
+      console.error('❌ links:ai-inspect error:', err);
+      return { success: false, message: err.message };
+    }
+  });
 }
 
 module.exports = {

@@ -33,28 +33,49 @@ async function extractReviewDetails(page) {
         }
       }
 
-      // Reviewer Name
-      const nameSelectors = [
-        '.d4r55',
-        'button.al6KDe .WNxdp',
-        'div.WNxdp',
-        'h1.DUwDvf',
-        'div.fontHeadlineSmall'
-      ];
+      // Reviewer Name Extraction
       let reviewerName = 'Anonymous';
-      for (const sel of nameSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.innerText && el.innerText.trim()) {
-          reviewerName = el.innerText.trim();
-          break;
+      
+      // 1. Try finding from action menu or tooltip (contains exact name: "Actions for <Name>'s review")
+      const actionBtn = document.querySelector('button[aria-label*="Actions for"], button[data-tooltip*="Actions for"], [aria-label*="\'s review"]');
+      if (actionBtn) {
+        const aria = actionBtn.getAttribute('aria-label') || actionBtn.getAttribute('data-tooltip') || '';
+        const match = aria.match(/Actions for (?:the )?(?:user )?(.+?)'s review/i) || aria.match(/(.+?)'s review/i);
+        if (match && match[1] && match[1].trim()) {
+          reviewerName = match[1].trim();
         }
       }
 
-      // Rating
+      // 2. Fallback to DOM elements if not found via aria-label
+      if (reviewerName === 'Anonymous') {
+        const nameSelectors = [
+          'button.WEBImb div.d4r55',
+          'div.d4r55',
+          'button.al6KDe .WNxdp',
+          'div.WNxdp',
+          'button[data-href*="contrib"]',
+          'h1.DUwDvf',
+          'div.fontHeadlineSmall'
+        ];
+        for (const sel of nameSelectors) {
+          const el = document.querySelector(sel);
+          if (el && el.innerText && el.innerText.trim() && el.innerText.trim().length < 60) {
+            reviewerName = el.innerText.trim();
+            break;
+          }
+        }
+      }
+
+      // Rating Extraction (detect exact number of stars)
       let rating = 'Unknown';
-      const starEl = document.querySelector('span[aria-label*="star"], span[aria-label*="Star"]');
-      if (starEl) {
-        rating = starEl.getAttribute('aria-label') || 'Unknown';
+      const allStars = Array.from(document.querySelectorAll('[aria-label*="star"], [aria-label*="Star"]'));
+      for (const el of allStars) {
+        const aria = (el.getAttribute('aria-label') || '').trim();
+        const m = aria.match(/\b([1-5])\s*stars?\b/i);
+        if (m) {
+          rating = `${m[1]} star${m[1] === '1' ? '' : 's'}`;
+          break;
+        }
       }
 
       return { reviewText, reviewerName, rating };
@@ -314,6 +335,107 @@ async function analyzeReviewWithAI({ reviewText, reviewerName, rating, provider 
 }
 
 /**
+ * Builds prompt asking for top 1 to 3 violation categories
+ */
+function buildMultiCategoryPrompt(reviewText, reviewerName, rating) {
+  return `You are an expert Google Maps content moderation policy engine.
+Analyze the following Google Maps review and select the TOP 1 to 3 MOST APPLICABLE violation categories from Google Maps policy under which this review can be reported and removed.
+
+OFFICIAL GOOGLE MAPS VIOLATION CATEGORIES:
+- "spam": Review is fake, bot-generated, promotional, or paid.
+- "conflict": Conflict of interest (competitor, disgruntled employee, competitor's affiliate).
+- "offtopic": Doesn't describe a genuine personal customer experience with the business.
+- "bullying": Bullying, personal attacks against specific staff/individuals, or harassment.
+- "profanity": Offensive, profane, or inappropriate language.
+- "harmful": Depicts or encourages harm, illegal acts, or dangerous content.
+- "discrimination": Hate speech, identity-based insults.
+- "personal_info": Contains private phone numbers, full addresses, or personal identity info.
+- "not_helpful": Unhelpful rating or irrelevant gibberish.
+
+REVIEW DATA:
+Reviewer: ${reviewerName || 'Anonymous'}
+Rating: ${rating || 'Unknown'}
+Review Text: "${reviewText || '(No text content, rating only)'}"
+
+INSTRUCTIONS:
+1. Select between 1 and 3 categories from the list above, ordered by strongest relevance first.
+2. If the review text is empty or generic 1-star rating with no text, default to: ["spam", "conflict", "offtopic"].
+3. Provide a brief 1-sentence reasoning for the selection.
+
+Respond ONLY with valid JSON in this exact structure:
+{
+  "categories": ["spam", "conflict", "offtopic"],
+  "reasoning": "1-sentence explanation"
+}`;
+}
+
+/**
+ * Analyzes review and returns up to 3 best-fitting violation categories
+ */
+async function analyzeReviewMultiCategoriesWithAI({ reviewText, reviewerName, rating, provider = 'gemini', apiKey, model }) {
+  if (!apiKey) {
+    return {
+      categories: ['spam', 'conflict', 'offtopic'],
+      reasoning: 'No AI API Key provided; defaulted to top standard violation categories.'
+    };
+  }
+
+  const prompt = buildMultiCategoryPrompt(reviewText, reviewerName, rating);
+  let result = null;
+  const prov = (provider || 'gemini').toLowerCase();
+
+  try {
+    if (prov === 'gemini') {
+      result = await callGemini(apiKey, model, prompt);
+    } else if (prov === 'openai') {
+      result = await callOpenAI(apiKey, model, prompt);
+    } else if (prov === 'anthropic') {
+      result = await callAnthropic(apiKey, model, prompt);
+    } else if (prov === 'deepseek') {
+      result = await callDeepSeek(apiKey, model, prompt);
+    } else {
+      result = await callGemini(apiKey, model, prompt);
+    }
+  } catch (err) {
+    console.error(`❌ AI Multi-category analysis failed with ${provider}:`, err.message);
+    return {
+      categories: ['spam', 'conflict', 'offtopic'],
+      reasoning: `AI Error: ${err.message}`
+    };
+  }
+
+  const validCategories = [
+    'offtopic', 'spam', 'conflict', 'profanity', 'harmful',
+    'bullying', 'discrimination', 'personal_info', 'not_helpful'
+  ];
+
+  let cats = Array.isArray(result?.categories) ? result.categories : [];
+  if (cats.length === 0 && result?.category) {
+    cats = [result.category];
+  }
+
+  // Normalize aliases
+  cats = cats.map(c => {
+    let clean = String(c || '').toLowerCase().trim();
+    if (clean === 'personal_information') clean = 'personal_info';
+    if (clean === 'nothelpful') clean = 'not_helpful';
+    if (clean === 'harassment') clean = 'bullying';
+    return clean;
+  }).filter(c => validCategories.includes(c));
+
+  // Deduplicate and cap at 3
+  cats = [...new Set(cats)].slice(0, 3);
+  if (cats.length === 0) {
+    cats = ['spam', 'conflict', 'offtopic'];
+  }
+
+  return {
+    categories: cats,
+    reasoning: result?.reasoning || 'Selected by AI Policy Moderation Engine'
+  };
+}
+
+/**
  * Builds legal removal prompt for AI evaluation
  */
 function buildLegalPrompt(reviewText, reviewerName, rating, businessName = 'the business') {
@@ -423,6 +545,9 @@ async function generateLegalNoticeWithAI({
 module.exports = {
   extractReviewDetails,
   analyzeReviewWithAI,
+  analyzeReviewMultiCategoriesWithAI,
   generateLegalNoticeWithAI,
+  buildPrompt,
+  buildMultiCategoryPrompt,
   reviewViolationWithGemini: analyzeReviewWithAI
 };

@@ -23,6 +23,7 @@ try {
 // Override environment variables with user-configured values from UI
 if (payload.email) process.env.GOOGLE_EMAIL = payload.email;
 if (payload.password) process.env.GOOGLE_PASSWORD = payload.password;
+if (payload.twoFactor || payload['2fa']) process.env.GOOGLE_2FA_SECRET = payload.twoFactor || payload['2fa'];
 if (payload.backupCode) process.env.GOOGLE_BACKUP_CODE = payload.backupCode;
 if (payload.reportReason) process.env.MAPS_REPORT_REASON = payload.reportReason;
 if (payload.reportType) process.env.MAPS_REPORT_TYPE = payload.reportType;
@@ -255,20 +256,45 @@ async function executeQueue() {
         const assignedAccount = unusedAccounts[accountCursor];
         accountCursor++;
 
+        // Resolve randomized category if multiple pre-selected categories exist
+        let assignedReason = target.reason || payload.reportReason || 'spam';
+        const rawCats = target.categories || target.reason || '';
+        let catList = [];
+        if (Array.isArray(rawCats)) {
+          catList = rawCats;
+        } else if (typeof rawCats === 'string' && rawCats.includes(',')) {
+          catList = rawCats.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        if (catList.length > 0) {
+          assignedReason = catList[Math.floor(Math.random() * catList.length)];
+        }
+
         jobs.push({
           url: target.url,
           mode: target.mode,
-          reason: target.reason,
+          reason: assignedReason,
           targetCount: targetCount,
           reportNum: doneCount + r + 1,
           account: assignedAccount
         });
       } else {
         // Session-only mode (no user credentials configured)
+        let assignedReason = target.reason || payload.reportReason || 'spam';
+        const rawCats = target.categories || target.reason || '';
+        let catList = [];
+        if (Array.isArray(rawCats)) {
+          catList = rawCats;
+        } else if (typeof rawCats === 'string' && rawCats.includes(',')) {
+          catList = rawCats.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        if (catList.length > 0) {
+          assignedReason = catList[Math.floor(Math.random() * catList.length)];
+        }
+
         jobs.push({
           url: target.url,
           mode: target.mode,
-          reason: target.reason,
+          reason: assignedReason,
           targetCount: targetCount,
           reportNum: doneCount + r + 1,
           account: null
@@ -286,10 +312,22 @@ async function executeQueue() {
     for (const target of targetUrls) {
       if (accounts.length > 0 && accountCursor >= unusedAccounts.length) break;
       const assignedAccount = accounts.length > 0 ? unusedAccounts[accountCursor++] : null;
+      let assignedReason = target.reason || payload.reportReason || 'spam';
+      const rawCats = target.categories || target.reason || '';
+      let catList = [];
+      if (Array.isArray(rawCats)) {
+        catList = rawCats;
+      } else if (typeof rawCats === 'string' && rawCats.includes(',')) {
+        catList = rawCats.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (catList.length > 0) {
+        assignedReason = catList[Math.floor(Math.random() * catList.length)];
+      }
+
       jobs.push({
         url: target.url,
         mode: target.mode,
-        reason: target.reason,
+        reason: assignedReason,
         targetCount: (target.targetCount || 1) + 1,
         reportNum: (target.doneCount || 0) + 1,
         account: assignedAccount
@@ -363,6 +401,7 @@ async function executeQueue() {
       await runAgentCore({
         email: currentAccount ? currentAccount.email : undefined,
         password: currentAccount ? currentAccount.password : undefined,
+        twoFactor: currentAccount ? (currentAccount.twoFactor || currentAccount['2fa']) : undefined,
         backupCode: currentAccount ? currentAccount.backupCode : undefined,
         reviewUrl: currentUrl,
         reportType: currentJob.mode || payload.reportType || 'standard',

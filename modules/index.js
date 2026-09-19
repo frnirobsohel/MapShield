@@ -10,7 +10,10 @@ const {
   reviewViolationWithGemini,
   extractReviewDetails,
   analyzeReviewWithAI,
-  generateLegalNoticeWithAI
+  analyzeReviewMultiCategoriesWithAI,
+  generateLegalNoticeWithAI,
+  buildPrompt,
+  buildMultiCategoryPrompt
 } = require('./ai');
 const auth = require('./auth');
 const helpers = require('./helpers');
@@ -34,7 +37,10 @@ module.exports = {
   reviewViolationWithGemini,
   extractReviewDetails,
   analyzeReviewWithAI,
+  analyzeReviewMultiCategoriesWithAI,
   generateLegalNoticeWithAI,
+  buildPrompt,
+  buildMultiCategoryPrompt,
 
   // Authentication & 2FA
   auth,

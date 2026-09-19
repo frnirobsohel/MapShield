@@ -101,6 +101,7 @@ async function smartClick(target) {
 async function runAgentCore(options = {}) {
   let email = options.email;
   let password = options.password;
+  let twoFactor = options.twoFactor || options['2fa'] || process.env.GOOGLE_2FA_SECRET;
   let backupCode = options.backupCode;
   let reviewUrl = options.reviewUrl;
   let reportReason = options.reportReason;
@@ -137,6 +138,7 @@ async function runAgentCore(options = {}) {
       if (!email && accounts.length > 0) {
         email = accounts[0].email;
         password = password || accounts[0].password;
+        twoFactor = twoFactor || accounts[0].twoFactor || accounts[0]['2fa'];
         backupCode = backupCode || accounts[0].backupCode;
       }
       if (!reviewUrl && links.length > 0) {
@@ -336,6 +338,7 @@ async function runAgentCore(options = {}) {
         currentCursor,
         email,
         password,
+        twoFactor,
         getBackupCode,
         smartClick,
         syncActiveTab

@@ -509,6 +509,7 @@ class DatabaseService {
     try {
       const rows = this.db.prepare('SELECT key, value FROM app_settings').all();
       for (const row of rows) {
+        if (row.key === 'data' || row.key === 'success') continue;
         if (row.key === 'headless' || row.key === 'aiInspection') {
           defaultSettings[row.key] = row.value === 'true' || row.value === '1';
         } else if (row.key === 'urls') {
@@ -533,7 +534,7 @@ class DatabaseService {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
       `);
       for (const [k, v] of Object.entries(settings)) {
-        if (v === undefined || v === null) continue;
+        if (v === undefined || v === null || k === 'data' || k === 'success') continue;
         const valStr = typeof v === 'object' ? JSON.stringify(v) : String(v);
         stmt.run(k, valStr, new Date().toISOString());
       }
