@@ -6,6 +6,8 @@
 const biometrics = require('./biometrics');
 const stealth = require('./stealth');
 const domUtils = require('./dom_utils');
+const screenshotPaths = require('./screenshot_paths');
+const cryptoUtils = require('./crypto_utils');
 
 module.exports = {
   // Biometrics & Human Dynamics
@@ -26,5 +28,21 @@ module.exports = {
   smartClick: domUtils.smartClick,
   clickElementByText: domUtils.clickElementByText,
   clickGoogleNext: domUtils.clickGoogleNext,
-  handleConsentIfPresent: domUtils.handleConsentIfPresent
+  handleConsentIfPresent: domUtils.handleConsentIfPresent,
+
+  // Screenshot & Report Logs Manager
+  screenshotPaths,
+  captureProofScreenshot: screenshotPaths.captureProofScreenshot,
+  captureErrorScreenshot: screenshotPaths.captureErrorScreenshot,
+  getProofScreenshotPath: screenshotPaths.getProofScreenshotPath,
+  getErrorScreenshotPath: screenshotPaths.getErrorScreenshotPath,
+  REPORT_LOGS_DIR: screenshotPaths.REPORT_LOGS_DIR,
+  PROOFS_DIR: screenshotPaths.PROOFS_DIR,
+  ERRORS_DIR: screenshotPaths.ERRORS_DIR,
+
+  // Crypto Utilities
+  encrypt: cryptoUtils.encrypt,
+  decrypt: cryptoUtils.decrypt,
+  isEncrypted: cryptoUtils.isEncrypted
 };
+

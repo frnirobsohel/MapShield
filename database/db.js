@@ -1,15 +1,21 @@
 // Suppress Node.js ExperimentalWarning for node:sqlite in desktop UI
-const origEmit = process.emit;
-process.emit = function (name, data, ...args) {
-  if (name === 'warning' && typeof data === 'object' && data.name === 'ExperimentalWarning') {
-    return false;
-  }
-  return origEmit.apply(process, [name, data, ...args]);
-};
+// Guard: only patch if not already patched by agent_runner.js
+if (!process.__experimentalWarningPatched) {
+  const origEmit = process.emit;
+  process.emit = function (name, data, ...args) {
+    if (name === 'warning' && typeof data === 'object' && (data.name === 'ExperimentalWarning' || (data.message && data.message.includes('SQLite')))) {
+      return false;
+    }
+    return origEmit.apply(process, [name, data, ...args]);
+  };
+  process.__experimentalWarningPatched = true;
+}
 
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const { encrypt, decrypt } = require('../modules/helpers/crypto_utils');
 
 class DatabaseService {
   constructor(dbPath) {
@@ -59,7 +65,9 @@ class DatabaseService {
         status TEXT DEFAULT 'queued',
         lastReportedAt TEXT,
         lastError TEXT,
-        updatedAt TEXT
+        updatedAt TEXT,
+        businessName TEXT,
+        country TEXT
       );
 
       CREATE TABLE IF NOT EXISTS proxies (
@@ -100,6 +108,10 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_review_links_url ON review_links(url);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON report_audit_logs(timestamp);
     `);
+
+    // Ensure businessName and country columns exist for review_links in existing databases
+    try { this.db.exec('ALTER TABLE review_links ADD COLUMN businessName TEXT;'); } catch (_) {}
+    try { this.db.exec('ALTER TABLE review_links ADD COLUMN country TEXT;'); } catch (_) {}
 
     // Auto-migrate from JSON files if database tables are empty
     this.autoMigrateFromJson();
@@ -207,12 +219,16 @@ class DatabaseService {
     const rows = this.db.prepare('SELECT * FROM accounts ORDER BY rowid ASC').all();
     return rows.map(r => ({
       ...r,
+      // Decrypt sensitive fields on read (backward compatible with plaintext)
+      password: decrypt(r.password),
+      twoFactor: decrypt(r.twoFactor),
+      backupCode: decrypt(r.backupCode),
       used: Boolean(r.used),
       usedCount: r.usedCount || 0
     }));
   }
 
-  saveAccounts(accounts, mirrorJson = true) {
+  saveAccounts(accounts) {
     if (!Array.isArray(accounts)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
@@ -223,13 +239,13 @@ class DatabaseService {
       `);
       for (let i = 0; i < accounts.length; i++) {
         const a = accounts[i];
-        const id = a.id || ('acc_' + (i + 1) + '_' + Math.random().toString(36).substr(2, 6));
+        const id = a.id || ('acc_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
           String(a.email || '').trim(),
-          a.password || '',
-          a.twoFactor || a['2fa'] || '',
-          a.backupCode || a.backupCodes || '',
+          encrypt(a.password || ''),
+          encrypt(a.twoFactor || a['2fa'] || ''),
+          encrypt(a.backupCode || a.backupCodes || ''),
           a.used ? 1 : 0,
           a.usedCount || 0,
           a.lastUsedAt || null,
@@ -242,13 +258,6 @@ class DatabaseService {
     } catch (e) {
       this.db.exec('ROLLBACK;');
       throw e;
-    }
-
-    if (mirrorJson) {
-      const rootDir = path.resolve(__dirname, '..');
-      try {
-        fs.writeFileSync(path.join(rootDir, 'accounts.json'), JSON.stringify(accounts, null, 2), 'utf8');
-      } catch (e) {}
     }
   }
 
@@ -275,10 +284,6 @@ class DatabaseService {
 
   clearAccounts() {
     this.db.exec('DELETE FROM accounts;');
-    const rootDir = path.resolve(__dirname, '..');
-    try {
-      fs.writeFileSync(path.join(rootDir, 'accounts.json'), '[]', 'utf8');
-    } catch (e) {}
   }
 
   resetAccountsHistory(email = null) {
@@ -306,12 +311,6 @@ class DatabaseService {
       `);
       stmt.run(new Date().toISOString());
     }
-
-    const rootDir = path.resolve(__dirname, '..');
-    try {
-      const accounts = this.getAccounts();
-      fs.writeFileSync(path.join(rootDir, 'accounts.json'), JSON.stringify(accounts, null, 2), 'utf8');
-    } catch (e) {}
   }
 
   // --- REVIEW LINKS OPERATIONS ---
@@ -321,22 +320,24 @@ class DatabaseService {
       ...r,
       targetCount: r.targetCount || 1,
       doneCount: r.doneCount || 0,
-      completedCount: r.completedCount || 0
+      completedCount: r.completedCount || 0,
+      businessName: r.businessName || '',
+      country: r.country || ''
     }));
   }
 
-  saveLinks(links, mirrorJson = true) {
+  saveLinks(links) {
     if (!Array.isArray(links)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
       this.db.exec('DELETE FROM review_links;');
       const stmt = this.db.prepare(`
-        INSERT INTO review_links (id, url, reason, mode, targetCount, doneCount, completedCount, status, lastReportedAt, lastError, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO review_links (id, url, reason, mode, targetCount, doneCount, completedCount, status, lastReportedAt, lastError, updatedAt, businessName, country)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (let i = 0; i < links.length; i++) {
         const l = links[i];
-        const id = l.id || ('lnk_' + (i + 1) + '_' + Math.random().toString(36).substr(2, 6));
+        const id = l.id || ('lnk_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
           String(l.url || '').trim(),
@@ -348,21 +349,15 @@ class DatabaseService {
           l.status || 'queued',
           l.lastReportedAt || null,
           l.lastError || null,
-          new Date().toISOString()
+          new Date().toISOString(),
+          l.businessName ? String(l.businessName).trim() : null,
+          l.country ? String(l.country).trim() : null
         );
       }
       this.db.exec('COMMIT;');
     } catch (e) {
       this.db.exec('ROLLBACK;');
       throw e;
-    }
-
-    if (mirrorJson) {
-      const rootDir = path.resolve(__dirname, '..');
-      try {
-        fs.writeFileSync(path.join(rootDir, 'review_links.json'), JSON.stringify(links, null, 2), 'utf8');
-        fs.writeFileSync(path.join(rootDir, 'review_urls.txt'), links.map(l => (typeof l === 'string' ? l : l.url)).join('\n'), 'utf8');
-      } catch (e) {}
     }
   }
 
@@ -374,18 +369,16 @@ class DatabaseService {
         UPDATE review_links
         SET doneCount = doneCount + 1,
             completedCount = completedCount + 1,
-            status = ?,
+            status = CASE WHEN doneCount + 1 >= targetCount THEN 'completed' ELSE 'queued' END,
             lastError = NULL,
             lastReportedAt = ?,
             updatedAt = ?
-        WHERE url = ? OR url LIKE ?
+        WHERE url = ?
       `);
       stmt.run(
-        'completed',
         updateData.timestamp || new Date().toLocaleTimeString(),
         new Date().toISOString(),
-        url.trim(),
-        `%${url.trim()}%`
+        url.trim()
       );
     } else {
       const stmt = this.db.prepare(`
@@ -393,25 +386,19 @@ class DatabaseService {
         SET status = ?,
             lastError = ?,
             updatedAt = ?
-        WHERE url = ? OR url LIKE ?
+        WHERE url = ?
       `);
       stmt.run(
         updateData.status || 'failed',
         updateData.error || 'Failed',
         new Date().toISOString(),
-        url.trim(),
-        `%${url.trim()}%`
+        url.trim()
       );
     }
   }
 
   clearLinks() {
     this.db.exec('DELETE FROM review_links;');
-    const rootDir = path.resolve(__dirname, '..');
-    try {
-      fs.writeFileSync(path.join(rootDir, 'review_links.json'), '[]', 'utf8');
-      fs.writeFileSync(path.join(rootDir, 'review_urls.txt'), '', 'utf8');
-    } catch (e) {}
   }
 
   // --- PROXIES OPERATIONS ---
@@ -419,7 +406,7 @@ class DatabaseService {
     return this.db.prepare('SELECT * FROM proxies ORDER BY rowid ASC').all();
   }
 
-  saveProxies(proxies, mirrorJson = true) {
+  saveProxies(proxies) {
     if (!Array.isArray(proxies)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
@@ -430,7 +417,7 @@ class DatabaseService {
       `);
       for (let i = 0; i < proxies.length; i++) {
         const p = proxies[i];
-        const id = p.id || ('prx_' + (i + 1) + '_' + Math.random().toString(36).substr(2, 6));
+        const id = p.id || ('prx_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
           String(p.host || '').trim(),
@@ -451,21 +438,10 @@ class DatabaseService {
       this.db.exec('ROLLBACK;');
       throw e;
     }
-
-    if (mirrorJson) {
-      const rootDir = path.resolve(__dirname, '..');
-      try {
-        fs.writeFileSync(path.join(rootDir, 'proxies.json'), JSON.stringify(proxies, null, 2), 'utf8');
-      } catch (e) {}
-    }
   }
 
   clearProxies() {
     this.db.exec('DELETE FROM proxies;');
-    const rootDir = path.resolve(__dirname, '..');
-    try {
-      fs.writeFileSync(path.join(rootDir, 'proxies.json'), '[]', 'utf8');
-    } catch (e) {}
   }
 
   // --- AUDIT LOGS OPERATIONS ---
@@ -503,7 +479,10 @@ class DatabaseService {
       aiProvider: 'gemini',
       aiApiKey: '',
       aiModel: 'gemini-2.0-flash',
-      aiInspection: false
+      aiInspection: false,
+      legalFullName: '',
+      legalBusinessName: '',
+      legalCountry: 'United States'
     };
 
     try {
@@ -514,6 +493,9 @@ class DatabaseService {
           defaultSettings[row.key] = row.value === 'true' || row.value === '1';
         } else if (row.key === 'urls') {
           try { defaultSettings.urls = JSON.parse(row.value); } catch (e) { defaultSettings.urls = [row.value]; }
+        } else if (row.key === 'aiApiKey') {
+          // Decrypt AI API key on read
+          defaultSettings[row.key] = decrypt(row.value);
         } else {
           defaultSettings[row.key] = row.value;
         }
@@ -536,7 +518,9 @@ class DatabaseService {
       for (const [k, v] of Object.entries(settings)) {
         if (v === undefined || v === null || k === 'data' || k === 'success') continue;
         const valStr = typeof v === 'object' ? JSON.stringify(v) : String(v);
-        stmt.run(k, valStr, new Date().toISOString());
+        // Encrypt sensitive settings before storing
+        const storeVal = (k === 'aiApiKey') ? encrypt(valStr) : valStr;
+        stmt.run(k, storeVal, new Date().toISOString());
       }
       this.db.exec('COMMIT;');
     } catch (e) {

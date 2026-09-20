@@ -57,14 +57,19 @@ class BrowserManager {
     }
 
     let cleanProxyServer = null;
-    let proxyAuth = null;
+    let proxyAuth = options.proxyAuth || null;
     if (options.proxyServer) {
-      const parsed = parseProxy(options.proxyServer);
-      if (parsed && parsed.serverUrl) {
-        cleanProxyServer = parsed.serverUrl;
-        proxyAuth = parsed.auth;
-      } else if (typeof options.proxyServer === 'string') {
-        cleanProxyServer = options.proxyServer;
+      if (typeof options.proxyServer === 'object' && options.proxyServer.serverUrl) {
+        cleanProxyServer = options.proxyServer.serverUrl;
+        if (!proxyAuth) proxyAuth = options.proxyServer.auth || null;
+      } else {
+        const parsed = parseProxy(options.proxyServer);
+        if (parsed && parsed.serverUrl) {
+          cleanProxyServer = parsed.serverUrl;
+          if (!proxyAuth) proxyAuth = parsed.auth;
+        } else if (typeof options.proxyServer === 'string') {
+          cleanProxyServer = options.proxyServer;
+        }
       }
     }
 

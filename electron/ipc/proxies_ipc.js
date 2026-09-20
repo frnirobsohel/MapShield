@@ -7,6 +7,7 @@ const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const crypto = require('crypto');
 
 function parseProxyLine(rawLine) {
   let line = (rawLine || '').trim();
@@ -81,7 +82,7 @@ function parseProxyLine(rawLine) {
   if (!host) return null;
 
   return {
-    id: 'prx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+    id: 'prx_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex'),
     protocol: protocol || 'http',
     host: host,
     port: Number(port) || 8080,
@@ -141,30 +142,34 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
   ipcMain.handle('proxies:get', async () => {
     try {
       const db = getDatabase();
-      const proxies = db.getProxies();
-      if (Array.isArray(proxies) && proxies.length > 0) {
-        return { success: true, proxies };
-      }
+      const proxies = db.getProxies() || [];
+      return { success: true, proxies };
     } catch (e) {
       console.warn('[SQLite] proxies:get notice:', e.message);
+      return { success: true, proxies: [] };
     }
-
-    const proxiesJsonPath = path.join(app.getAppPath(), 'proxies.json');
-    if (fs.existsSync(proxiesJsonPath)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(proxiesJsonPath, 'utf8'));
-        if (Array.isArray(data)) {
-          return { success: true, proxies: data };
-        }
-      } catch (e) {}
-    }
-    return { success: true, proxies: [] };
   });
 
   ipcMain.handle('proxies:save', async (event, proxies) => {
     try {
+      if (!Array.isArray(proxies)) {
+        return { success: false, error: 'Invalid proxies payload: expected an array' };
+      }
+      const validated = proxies.filter(p => p && typeof p === 'object' && p.host).map(p => ({
+        id: typeof p.id === 'string' && p.id ? p.id : ('prx_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex')),
+        host: String(p.host).trim(),
+        port: parseInt(p.port, 10) || 8080,
+        protocol: typeof p.protocol === 'string' ? p.protocol.trim() : 'http',
+        username: String(p.username || '').trim(),
+        password: String(p.password || '').trim(),
+        formatted: typeof p.formatted === 'string' ? p.formatted : `${p.host}:${p.port}`,
+        latency: typeof p.latency === 'string' ? p.latency : '—',
+        status: typeof p.status === 'string' ? p.status : 'untested',
+        lastTestedAt: p.lastTestedAt || p.lastTested || null,
+        error: p.error || null
+      }));
       const db = getDatabase();
-      db.saveProxies(proxies || [], true);
+      db.saveProxies(validated, false);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -224,18 +229,15 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
         existing = db.getProxies() || [];
       } catch (e) {}
       if (existing.length === 0) {
-        const proxiesJsonPath = path.join(app.getAppPath(), 'proxies.json');
+        const proxiesUserData = path.join(app.getPath('userData'), 'proxies.json');
+        const proxiesAppPath = path.join(app.getAppPath(), 'proxies.json');
+        const proxiesJsonPath = fs.existsSync(proxiesUserData) ? proxiesUserData : proxiesAppPath;
         if (fs.existsSync(proxiesJsonPath)) {
           try { existing = JSON.parse(fs.readFileSync(proxiesJsonPath, 'utf8')); } catch (e) {}
         }
       }
       const combined = [...existing, ...newProxies];
-      try {
-        db.saveProxies(combined, true);
-      } catch (e) {
-        const proxiesJsonPath = path.join(app.getAppPath(), 'proxies.json');
-        fs.writeFileSync(proxiesJsonPath, JSON.stringify(combined, null, 2), 'utf8');
-      }
+      db.saveProxies(combined, false);
 
       return {
         success: true,
@@ -249,10 +251,14 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
   });
 
   ipcMain.handle('proxies:test', async (event, proxy) => {
-    if (!proxy || !proxy.host || !proxy.port) {
+    if (!proxy || typeof proxy !== 'object' || !proxy.host || !proxy.port) {
       return { success: false, latency: 'Error', status: 'failed', error: 'Invalid proxy parameters' };
     }
-    return await testProxyPing(proxy.host, proxy.port, 3500);
+    const port = parseInt(proxy.port, 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      return { success: false, latency: 'Error', status: 'failed', error: 'Invalid proxy port (must be 1-65535)' };
+    }
+    return await testProxyPing(String(proxy.host).trim(), port, 3500);
   });
 
   ipcMain.handle('proxies:testAll', async (event, proxies) => {

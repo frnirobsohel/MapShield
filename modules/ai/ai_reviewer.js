@@ -78,12 +78,21 @@ async function extractReviewDetails(page) {
         }
       }
 
-      return { reviewText, reviewerName, rating };
+      // Business Name Extraction from Google Maps Listing
+      let businessName = '';
+      const bTitleEl = document.querySelector('h1.DUwDvf, h1.fontHeadlineLarge, h2.fontHeadlineLarge, .fontHeadlineLarge');
+      if (bTitleEl && bTitleEl.innerText && bTitleEl.innerText.trim().length > 1) {
+        businessName = bTitleEl.innerText.trim();
+      } else if (document.title && document.title.includes('- Google Maps')) {
+        businessName = document.title.replace(/- Google Maps.*/i, '').trim();
+      }
+
+      return { reviewText, reviewerName, rating, businessName };
     });
 
     return details;
   } catch (e) {
-    return { reviewText: '', reviewerName: 'Unknown', rating: 'Unknown' };
+    return { reviewText: '', reviewerName: 'Unknown', rating: 'Unknown', businessName: '' };
   }
 }
 
@@ -436,34 +445,38 @@ async function analyzeReviewMultiCategoriesWithAI({ reviewText, reviewerName, ra
 }
 
 /**
- * Builds legal removal prompt for AI evaluation
+ * Builds legal removal prompt for AI evaluation tailored for Google's 1000-char legal textarea
  */
 function buildLegalPrompt(reviewText, reviewerName, rating, businessName = 'the business') {
-  return `You are a certified legal content specialist specializing in Online Defamation, False Representation, and Content Removal under Google Content Policy and Applicable Civil Law.
-Analyze the following Google Maps review and generate a formal legal complaint and removal justification.
+  const isBlank = !reviewText || reviewText.trim().length === 0 || reviewText.trim() === '(No text content, rating only)';
+  
+  return `You are a certified legal content removal specialist specializing in Google Maps Defamation, 16 C.F.R. Part 465 (FTC Fake Review Rule), and Commercial Libel Per Se.
+Analyze the following Google Maps review and generate a formal legal complaint text specifically designed for Google's Legal Removal Webform ("Explain in detail why you believe the content on the above URL is unlawful").
 
 TARGET REVIEW DATA:
-Reviewer: ${reviewerName || 'Anonymous'}
+Reviewer Name: ${reviewerName || 'Anonymous'}
 Rating: ${rating || '1 star'}
-Business: ${businessName}
-Review Text: "${reviewText || '(No text content, rating only)'}"
+Business Name: ${businessName}
+Review Content: "${isBlank ? '[BLANK 1-STAR RATING WITH ZERO TEXT]' : reviewText.trim()}"
 
-TASKS:
-1. Determine if the review contains legally actionable elements:
-   - Defamation / Libel (unsubstantiated false factual claims damaging commercial reputation)
-   - False allegations of criminal or illegal activity
-   - Harassment / Intentional infliction of economic distress
-   - Conflict of interest / Extortion
-2. Formulate formal legal grounds and specific legal arguments suitable for Google Legal Troubleshooter / Legal Removal Webform.
+STRICT CONSTRAINTS:
+1. "legalClaimText" MUST BE BETWEEN 650 AND 920 CHARACTERS IN LENGTH. Under NO circumstances exceed 950 characters (Google has a strict 1000 character limit).
+2. For reviews WITH text:
+   - Establish lack of consumer nexus: State that business audited CRM/billing records and confirms reviewer was never a client, violating 16 C.F.R. § 465.2.
+   - Establish Defamation Per Se: State that the false factual allegations impute dishonesty/unlawful acts, causing tortious interference with business operations.
+   - Demand immediate removal under Google UGC Content Policy & applicable civil defamation laws.
+3. For BLANK reviews (no text):
+   - Cite 16 C.F.R. Part 465 & Google Fake Engagement Policy: unverified 1-star rating attack with zero commercial transaction, published with malicious intent to distort the public rating index.
+4. Do NOT use bullet points or markdown headings. Write as a continuous, formal legal paragraph suitable for a webform textarea.
 
 Respond ONLY with valid JSON in this exact structure:
 {
   "isLegalViolation": true,
-  "legalGrounds": "Defamation and Unlawful Commercial Disparagement",
-  "severity": "high" | "medium" | "low",
-  "infringingExcerpts": ["quote 1", "quote 2"],
-  "legalClaimText": "formal legal justification explaining the violation of law and damage to business",
-  "formalNoticeSummary": "Brief summary of removal demand under applicable content removal law"
+  "legalGrounds": "Defamation Per Se and Deceptive Fake Review (16 CFR § 465.2)",
+  "severity": "high",
+  "infringingExcerpts": ["key quote or blank indicator"],
+  "legalClaimText": "formal legal justification paragraph (650 to 920 characters max)",
+  "formalNoticeSummary": "Demand for immediate removal under Google Policy and Applicable Civil Law"
 }`;
 }
 
@@ -495,22 +508,32 @@ async function generateLegalNoticeWithAI({
   model,
   businessName = 'the affected business'
 }) {
+  const cleanText = (reviewText || '').trim();
+  const isBlank = !cleanText || cleanText === '(No text content, rating only)';
+  const revName = (reviewerName || 'Anonymous').trim();
+
+  // High-success battle-tested fallback legal templates (<900 chars)
+  const defaultTextLegal = `This review published by "${revName}" contains false and defamatory factual allegations that inflict commercial injury on ${businessName}. A thorough audit of all point-of-sale, appointment, and CRM records confirms this individual has never been a client or patron of this establishment. Fabricating consumer interactions violates 16 C.F.R. § 465.2 (FTC Rule on Fake Consumer Reviews) and constitutes Defamation Per Se and tortious interference with prospective economic advantage. The statements lack factual basis and were posted with malice to damage business reputation. We formally demand immediate removal under Google's Prohibited and Restricted Content Policy and applicable defamation laws.`;
+
+  const defaultBlankLegal = `This 1-star rating submitted by "${revName}" contains zero descriptive feedback and represents a deceptive, unverified attack against ${businessName}. An internal audit confirms the poster is not a registered client or patron. Under 16 C.F.R. Part 465 (FTC Rule on Fake Reviews and Deceptive Practices) and Google's Fake Engagement policy, publishing ratings without genuine commercial experience is an unlawful deceptive practice intended solely to artificially manipulate public rating metrics. Because there is no consumer transaction supporting this submission, it constitutes tortious commercial disparagement. We formally demand immediate removal of this rating from Google Maps.`;
+
   const defaultLegalNotice = {
     isLegalViolation: true,
-    legalGrounds: 'Defamation and False Representation',
+    legalGrounds: isBlank ? 'Deceptive Fake Engagement (16 C.F.R. § 465.2)' : 'Defamation Per Se & 16 C.F.R. § 465.2',
     severity: 'high',
-    infringingExcerpts: reviewText ? [reviewText.slice(0, 120)] : ['Unsubstantiated rating attack'],
-    legalClaimText: `The review published by "${reviewerName || 'Anonymous'}" contains materially false, defamatory statements that inflict commercial injury and tortious interference against ${businessName}. The claims lack factual basis and constitute unlawful defamation under applicable civil law and Google User Contributed Content policies.`,
-    formalNoticeSummary: `Formal Legal Notice: Demand for immediate removal of defamatory content under applicable law.`
+    infringingExcerpts: isBlank ? ['Blank 1-star rating attack'] : [cleanText.slice(0, 100)],
+    legalClaimText: isBlank ? defaultBlankLegal : defaultTextLegal,
+    formalNoticeSummary: `Formal Legal Removal Demand under 16 C.F.R. Part 465 and Google Maps Policy.`
   };
 
+  // If no AI key, return deterministic battle-tested legal template
   if (!apiKey) {
-    console.warn('⚠️ No AI API Key provided for Legal Notice generation. Using standard legal template.');
+    console.log('⚖️ [Legal Template] Using deterministic high-compliance legal template (No AI key).');
     return defaultLegalNotice;
   }
 
-  const prompt = buildLegalPrompt(reviewText, reviewerName, rating, businessName);
-  console.log(`⚖️ [AI Legal Decision] Evaluating legal grounds with ${(provider || 'gemini').toUpperCase()}...`);
+  const prompt = buildLegalPrompt(cleanText, revName, rating, businessName);
+  console.log(`⚖️ [AI Legal Decision] Generating tailored legal justification with ${(provider || 'gemini').toUpperCase()}...`);
 
   let result = null;
   const prov = (provider || 'gemini').toLowerCase();
@@ -532,12 +555,18 @@ async function generateLegalNoticeWithAI({
     return defaultLegalNotice;
   }
 
+  let finalClaim = (result?.legalClaimText || defaultLegalNotice.legalClaimText).trim();
+  // Strictly enforce Google's 1000 character limit by capping at 950 characters
+  if (finalClaim.length > 950) {
+    finalClaim = finalClaim.slice(0, 940).trim() + '... Immediate removal demanded under applicable law.';
+  }
+
   return {
     isLegalViolation: result?.isLegalViolation !== undefined ? result.isLegalViolation : true,
     legalGrounds: result?.legalGrounds || defaultLegalNotice.legalGrounds,
     severity: result?.severity || defaultLegalNotice.severity,
     infringingExcerpts: Array.isArray(result?.infringingExcerpts) ? result.infringingExcerpts : defaultLegalNotice.infringingExcerpts,
-    legalClaimText: result?.legalClaimText || defaultLegalNotice.legalClaimText,
+    legalClaimText: finalClaim,
     formalNoticeSummary: result?.formalNoticeSummary || defaultLegalNotice.formalNoticeSummary
   };
 }

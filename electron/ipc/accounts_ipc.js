@@ -117,36 +117,37 @@ function registerAccountsIpc({ mainWindow, app, getDatabase, getXLSX }) {
     }
   });
 
-  // IPC: Get Saved Accounts (from SQLite with fallback to accounts.json)
+  // IPC: Get Saved Accounts (from SQLite)
   ipcMain.handle('accounts:get', async () => {
     try {
       const db = getDatabase();
-      const accounts = db.getAccounts();
-      if (Array.isArray(accounts) && accounts.length > 0) {
-        return { success: true, accounts };
-      }
+      const accounts = db.getAccounts() || [];
+      return { success: true, accounts };
     } catch (e) {
       console.warn('[SQLite] accounts:get notice:', e.message);
+      return { success: true, accounts: [] };
     }
-
-    const accountsJsonPath = path.join(app.getAppPath(), 'accounts.json');
-    if (fs.existsSync(accountsJsonPath)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(accountsJsonPath, 'utf8'));
-        if (Array.isArray(data) && data.length > 0) {
-          return { success: true, accounts: data };
-        }
-      } catch (e) {}
-    }
-
-    return { success: true, accounts: [] };
   });
 
-  // IPC: Save Accounts List to SQLite & mirror to accounts.json
+  // IPC: Save Accounts List to SQLite
   ipcMain.handle('accounts:save', async (event, accounts) => {
     try {
+      if (!Array.isArray(accounts)) {
+        return { success: false, error: 'Invalid accounts payload: expected an array' };
+      }
+      const validated = accounts.filter(a => a && typeof a === 'object' && a.email).map(a => ({
+        id: typeof a.id === 'string' && a.id ? a.id : undefined,
+        email: String(a.email).trim(),
+        password: String(a.password || ''),
+        twoFactor: String(a.twoFactor || a['2fa'] || ''),
+        backupCode: String(a.backupCode || a.backupCodes || ''),
+        used: Boolean(a.used),
+        usedCount: Number(a.usedCount) || 0,
+        status: typeof a.status === 'string' ? a.status : 'active',
+        lastError: typeof a.lastError === 'string' ? a.lastError : null
+      }));
       const db = getDatabase();
-      db.saveAccounts(accounts || [], true);
+      db.saveAccounts(validated, false);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -156,8 +157,9 @@ function registerAccountsIpc({ mainWindow, app, getDatabase, getXLSX }) {
   // IPC: Reset Accounts Usage History
   ipcMain.handle('accounts:resetHistory', async (event, email) => {
     try {
+      const cleanEmail = typeof email === 'string' && email.trim() ? email.trim() : null;
       const db = getDatabase();
-      db.resetAccountsHistory(email || null);
+      db.resetAccountsHistory(cleanEmail);
       const accounts = db.getAccounts();
       return { success: true, accounts };
     } catch (err) {

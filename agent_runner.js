@@ -6,6 +6,7 @@ process.emit = function (name, data, ...args) {
   }
   return origEmit.apply(process, [name, data, ...args]);
 };
+process.__experimentalWarningPatched = true;
 
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +14,7 @@ const { getDatabase } = require('./database/db');
 
 // Read payload passed from Electron
 const payloadRaw = process.env.AGENT_PAYLOAD;
+delete process.env.AGENT_PAYLOAD; // Wipe immediately from environment memory
 let payload = {};
 try {
   if (payloadRaw) payload = JSON.parse(payloadRaw);
@@ -54,7 +56,9 @@ if (!aiConfig.aiApiKey) {
         aiInspection: aiConfig.aiInspection !== undefined ? aiConfig.aiInspection : (settings.aiInspection || false)
       };
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('⚠️ Settings fallback notice:', e.message);
+  }
 }
 
 // Browser selection pool (for randomized browser rotation across jobs)
@@ -89,7 +93,7 @@ if (rawTargetList.length === 0) {
   rawTargetList = ['https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7'];
 }
 
-// Normalize each target to a clean object { url, mode, reason, targetCount, doneCount }
+// Normalize each target to a clean object { url, mode, reason, targetCount, doneCount, businessName, country }
 const targetUrls = rawTargetList.map(item => {
   if (typeof item === 'object' && item !== null) {
     const rawUrl = (item.url || '').trim();
@@ -99,7 +103,9 @@ const targetUrls = rawTargetList.map(item => {
       mode: item.mode || payload.reportType || 'standard',
       reason: item.reason || payload.reportReason || 'spam',
       targetCount: Math.max(1, parseInt(item.targetCount, 10) || 1),
-      doneCount: Math.max(0, parseInt(item.doneCount, 10) || 0)
+      doneCount: Math.max(0, parseInt(item.doneCount, 10) || 0),
+      businessName: (item.businessName || '').trim(),
+      country: (item.country || '').trim()
     };
   } else if (typeof item === 'string') {
     const rawUrl = item.trim();
@@ -109,7 +115,9 @@ const targetUrls = rawTargetList.map(item => {
       mode: payload.reportType || 'standard',
       reason: payload.reportReason || 'spam',
       targetCount: 1,
-      doneCount: 0
+      doneCount: 0,
+      businessName: '',
+      country: ''
     };
   }
   return null;
@@ -120,40 +128,101 @@ console.log(`🌐 Target Browser: ${payload.browserPath || 'Google Chrome (Defau
 console.log(`⚖️ Report Mode: ${payload.reportType === 'legal' ? 'Report a Legal Notice' : 'Standard Policy Report (' + (payload.reportReason || 'spam') + ')'}`);
 console.log(`📋 Target Queue: ${targetUrls.length} Review URL(s) to process\n`);
 
-// Watch for screenshot generation (both success proof and error diagnostics)
-const watchedScreenshots = [
+// Watch for screenshot generation (both success proof in report_logs/proofs and error diagnostics in report_logs/errors)
+const PROOFS_DIR = path.join(__dirname, 'report_logs', 'proofs');
+const ERRORS_DIR = path.join(__dirname, 'report_logs', 'errors');
+
+try {
+  fs.mkdirSync(PROOFS_DIR, { recursive: true });
+  fs.mkdirSync(ERRORS_DIR, { recursive: true });
+} catch (_) {}
+
+const legacyWatchedScreenshots = [
   'maps_report_spam_submitted.png',
+  'legal_notice_submitted.png',
   'error_screenshot.png',
   'maps_error.png',
   'maps_reason_error.png',
   'debug_try_another_way.png'
 ];
 
-const lastScreenshotMtime = {};
-for (const sName of watchedScreenshots) {
-  const p = path.join(__dirname, sName);
-  if (fs.existsSync(p)) {
-    try { lastScreenshotMtime[sName] = fs.statSync(p).mtimeMs; } catch (e) { lastScreenshotMtime[sName] = 0; }
-  } else {
-    lastScreenshotMtime[sName] = 0;
-  }
+const watchedScreenshotMtimes = new Map();
+
+function initExistingScreenshotMtimes() {
+  try {
+    if (fs.existsSync(PROOFS_DIR)) {
+      for (const file of fs.readdirSync(PROOFS_DIR)) {
+        const p = path.join(PROOFS_DIR, file);
+        try { watchedScreenshotMtimes.set(p, fs.statSync(p).mtimeMs); } catch (_) {}
+      }
+    }
+    if (fs.existsSync(ERRORS_DIR)) {
+      for (const file of fs.readdirSync(ERRORS_DIR)) {
+        const p = path.join(ERRORS_DIR, file);
+        try { watchedScreenshotMtimes.set(p, fs.statSync(p).mtimeMs); } catch (_) {}
+      }
+    }
+    for (const sName of legacyWatchedScreenshots) {
+      const p = path.join(__dirname, sName);
+      if (fs.existsSync(p)) {
+        try { watchedScreenshotMtimes.set(p, fs.statSync(p).mtimeMs); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+initExistingScreenshotMtimes();
+
+function checkAndNotifyScreenshot(fullPath, filename, category = 'proof') {
+  try {
+    if (!fs.existsSync(fullPath)) return;
+    const stat = fs.statSync(fullPath);
+    if (!stat.size || stat.size === 0) return; // Wait for write to finish
+    const lastMtime = watchedScreenshotMtimes.get(fullPath) || 0;
+    if (stat.mtimeMs > lastMtime) {
+      watchedScreenshotMtimes.set(fullPath, stat.mtimeMs);
+      // Use async file read to avoid blocking the event loop for large screenshots
+      fs.promises.readFile(fullPath).then(buffer => {
+        const b64 = buffer.toString('base64');
+        notifyParent('screenshot', {
+          category, // 'proof' or 'error'
+          folder: category === 'proof' ? 'report_logs/proofs' : 'report_logs/errors',
+          filename,
+          base64: 'data:image/png;base64,' + b64,
+          timestamp: new Date().toLocaleTimeString()
+        });
+      }).catch(() => {});
+    }
+  } catch (_) {}
 }
 
 function flushScreenshots() {
   try {
-    for (const sName of watchedScreenshots) {
+    // 1. Scan report_logs/proofs (skip mirror latest_proof.png to avoid duplicate notifications)
+    if (fs.existsSync(PROOFS_DIR)) {
+      const proofFiles = fs.readdirSync(PROOFS_DIR);
+      for (const file of proofFiles) {
+        if (file.toLowerCase().endsWith('.png') && !file.startsWith('latest_')) {
+          checkAndNotifyScreenshot(path.join(PROOFS_DIR, file), file, 'proof');
+        }
+      }
+    }
+
+    // 2. Scan report_logs/errors (skip mirror latest_error.png to avoid duplicate notifications)
+    if (fs.existsSync(ERRORS_DIR)) {
+      const errorFiles = fs.readdirSync(ERRORS_DIR);
+      for (const file of errorFiles) {
+        if (file.toLowerCase().endsWith('.png') && !file.startsWith('latest_')) {
+          checkAndNotifyScreenshot(path.join(ERRORS_DIR, file), file, 'error');
+        }
+      }
+    }
+
+    // 3. Fallback for root files (legacy)
+    for (const sName of legacyWatchedScreenshots) {
       const p = path.join(__dirname, sName);
       if (fs.existsSync(p)) {
-        const stat = fs.statSync(p);
-        if (stat.mtimeMs > (lastScreenshotMtime[sName] || 0)) {
-          lastScreenshotMtime[sName] = stat.mtimeMs;
-          const b64 = fs.readFileSync(p).toString('base64');
-          notifyParent('screenshot', {
-            filename: sName,
-            base64: 'data:image/png;base64,' + b64,
-            timestamp: new Date().toLocaleTimeString()
-          });
-        }
+        const isError = sName.includes('error') || sName.includes('debug');
+        checkAndNotifyScreenshot(p, sName, isError ? 'error' : 'proof');
       }
     }
   } catch (e) {}
@@ -201,7 +270,9 @@ async function executeQueue() {
     try {
       const db = getDatabase();
       accounts = db.getAccounts();
-    } catch (e) {}
+    } catch (e) {
+      console.warn('⚠️ Could not load accounts from database:', e.message);
+    }
   }
   if (accounts.length === 0 && payload.email) {
     accounts = [
@@ -275,10 +346,17 @@ async function executeQueue() {
           reason: assignedReason,
           targetCount: targetCount,
           reportNum: doneCount + r + 1,
-          account: assignedAccount
+          account: assignedAccount,
+          businessName: target.businessName || '',
+          country: target.country || ''
         });
       } else {
         // Session-only mode (no user credentials configured)
+        // Guard against duplicate identity reports: in session-only mode, repeated reports from the identical session identity risk spam-flagging
+        if (r > 0) {
+          console.warn(`⚠️ Session-only mode: Target "${target.url}" capped to 1 report per run to prevent duplicate identity detection (import Google Accounts to report multiple times).`);
+          break;
+        }
         let assignedReason = target.reason || payload.reportReason || 'spam';
         const rawCats = target.categories || target.reason || '';
         let catList = [];
@@ -297,7 +375,9 @@ async function executeQueue() {
           reason: assignedReason,
           targetCount: targetCount,
           reportNum: doneCount + r + 1,
-          account: null
+          account: null,
+          businessName: target.businessName || '',
+          country: target.country || ''
         });
       }
     }
@@ -330,7 +410,9 @@ async function executeQueue() {
         reason: assignedReason,
         targetCount: (target.targetCount || 1) + 1,
         reportNum: (target.doneCount || 0) + 1,
-        account: assignedAccount
+        account: assignedAccount,
+        businessName: target.businessName || '',
+        country: target.country || ''
       });
     }
   }
@@ -398,6 +480,16 @@ async function executeQueue() {
     console.log(`=======================================================\n`);
 
     try {
+      const dbSettings = (() => {
+        try { return getDatabase().getSettings(); } catch (_) { return {}; }
+      })();
+      const senderInfo = {
+        fullName: payload.legalFullName || dbSettings.legalFullName || '',
+        businessName: currentJob.businessName || payload.legalBusinessName || dbSettings.legalBusinessName || 'the business',
+        country: currentJob.country || payload.legalCountry || dbSettings.legalCountry || 'United States',
+        email: currentAccount ? currentAccount.email : (payload.email || '')
+      };
+
       await runAgentCore({
         email: currentAccount ? currentAccount.email : undefined,
         password: currentAccount ? currentAccount.password : undefined,
@@ -410,6 +502,7 @@ async function executeQueue() {
         proxyServer: currentProxy || undefined,
         headless: payload.headless === true,
         aiOptions: aiConfig,
+        senderInfo,
         isLast: i === jobs.length - 1
       });
       console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
@@ -425,6 +518,7 @@ async function executeQueue() {
           reason: currentJob.reason || payload.reportReason || 'spam',
           mode: currentJob.mode || payload.reportType || 'standard',
           error: null,
+          screenshot: 'report_logs/proofs/latest_proof.png',
           timestamp: new Date().toISOString()
         });
       } catch (e) {
@@ -462,6 +556,7 @@ async function executeQueue() {
           reason: currentJob.reason || payload.reportReason || 'spam',
           mode: currentJob.mode || payload.reportType || 'standard',
           error: err.message || 'Report execution failed',
+          screenshot: 'report_logs/errors/latest_error.png',
           timestamp: new Date().toISOString()
         });
       } catch (e) {
@@ -483,6 +578,13 @@ async function executeQueue() {
         error: err.message || 'Report execution failed',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
+    }
+
+    // Rate limiting: Add cooldown between successive jobs to reduce Google detection risk
+    if (i < jobs.length - 1) {
+      const cooldownMs = Math.floor(Math.random() * 7000) + 8000; // 8-15 seconds
+      console.log(`⏱️ [Rate Limit] Cooling down for ${(cooldownMs / 1000).toFixed(1)}s before next job...`);
+      await new Promise(r => setTimeout(r, cooldownMs));
     }
   }
 

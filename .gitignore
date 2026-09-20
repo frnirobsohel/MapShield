@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment and Credentials
 .env
@@ -20,6 +19,7 @@ yarn-debug.log*
 database/*.sqlite*
 accounts.json
 review_links.json
+review_urls.txt
 proxies.json
 
 # Auto-generated Admin Records
@@ -27,6 +27,7 @@ scripts/generated_licenses.json
 
 # Temporary / Output Files
 legal_notices/
+report_logs/
 *.png
 *.jpg
 *.jpeg

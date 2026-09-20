@@ -207,7 +207,25 @@ function registerSystemIpc({ mainWindow, app, getDatabase }) {
 
   ipcMain.handle('folder:open', async () => {
     try {
-      await shell.openPath(app.getAppPath());
+      const targetFolder = app.isPackaged ? app.getPath('userData') : app.getAppPath();
+      await shell.openPath(targetFolder);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('folder:openReports', async (_event, subfolder = '') => {
+    try {
+      const baseDir = app.isPackaged ? app.getPath('userData') : app.getAppPath();
+      const sanitizedSubfolder = String(subfolder || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const targetDir = sanitizedSubfolder
+        ? path.join(baseDir, 'report_logs', sanitizedSubfolder)
+        : path.join(baseDir, 'report_logs');
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      await shell.openPath(targetDir);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -226,8 +244,11 @@ function registerSystemIpc({ mainWindow, app, getDatabase }) {
 
   ipcMain.handle('config:save', async (event, data) => {
     try {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return { success: false, error: 'Invalid config settings: expected an object' };
+      }
       const db = getDatabase();
-      const cleanData = { ...(data || {}) };
+      const cleanData = { ...data };
       delete cleanData.data;
       delete cleanData.success;
       db.saveSettings(cleanData);

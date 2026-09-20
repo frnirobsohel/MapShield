@@ -25,7 +25,8 @@ const {
   applyDeepStealth,
   smartClick: domSmartClick,
   parseProxy,
-  UserAgentManager
+  UserAgentManager,
+  captureErrorScreenshot
 } = require('./modules');
 
 let browserInstance = null;
@@ -157,7 +158,9 @@ async function runAgentCore(options = {}) {
           aiInspection: aiOptions.aiInspection !== undefined ? aiOptions.aiInspection : (settings.aiInspection || false)
         };
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('⚠️ Database fallback notice:', e.message);
+    }
   }
 
   if (!reviewUrl) reviewUrl = DEFAULT_MAPS_URL;
@@ -360,7 +363,8 @@ async function runAgentCore(options = {}) {
         humanScroll,
         reportType,
         reportReason,
-        aiOptions
+        aiOptions,
+        senderInfo: options.senderInfo
       });
       if (repResult === false) {
         throw new Error('Google Maps report execution could not be verified');
@@ -380,7 +384,8 @@ async function runAgentCore(options = {}) {
         humanScroll,
         reportType,
         reportReason,
-        aiOptions
+        aiOptions,
+        senderInfo: options.senderInfo
       });
       if (repResult === false) {
         throw new Error('Google Maps report execution could not be verified');
@@ -395,9 +400,9 @@ async function runAgentCore(options = {}) {
 
   } catch (error) {
     console.error('\n❌ An error occurred:', error.message);
-    console.log('Saving screenshot: error_screenshot.png');
+    console.log('Saving diagnostic screenshot to report_logs/errors/...');
     if (currentTab) {
-      await currentTab.screenshot({ path: 'error_screenshot.png', fullPage: true }).catch(() => {});
+      await captureErrorScreenshot(currentTab, 'agent_error').catch(() => {});
     }
     throw error;
   } finally {
@@ -436,7 +441,10 @@ async function forceCloseBrowser() {
     } catch (e) {
       try {
         const proc = browserInstance.process();
-        if (proc && !proc.killed) proc.kill('SIGKILL');
+        if (proc && !proc.killed) {
+          // Use SIGTERM on all platforms (Node.js maps this to taskkill on Windows)
+          proc.kill();
+        }
       } catch (err) {}
     }
     browserInstance = null;

@@ -29,8 +29,9 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
   // IPC: Clear Session (cleans both legacy and isolated account sessions)
   ipcMain.handle('session:clear', async () => {
     try {
-      const sessionDir = path.join(app.getAppPath(), 'chrome_session');
-      const multiSessionsDir = path.join(app.getAppPath(), 'chrome_sessions');
+      // Use userData path (always writable) instead of appPath (read-only in asar)
+      const sessionDir = path.join(app.getPath('userData'), 'chrome_session');
+      const multiSessionsDir = path.join(app.getPath('userData'), 'chrome_sessions');
       let cleared = false;
 
       if (fs.existsSync(sessionDir)) {
@@ -53,8 +54,8 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
 
   // IPC: Check Session Status
   ipcMain.handle('session:status', async () => {
-    const sessionDir = path.join(app.getAppPath(), 'chrome_session');
-    const multiSessionsDir = path.join(app.getAppPath(), 'chrome_sessions');
+    const sessionDir = path.join(app.getPath('userData'), 'chrome_session');
+    const multiSessionsDir = path.join(app.getPath('userData'), 'chrome_sessions');
     const hasSession = fs.existsSync(sessionDir) || (fs.existsSync(multiSessionsDir) && fs.readdirSync(multiSessionsDir).length > 0);
     return { hasSession };
   });
@@ -72,7 +73,8 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
         cwd: app.getAppPath(),
         env: {
           ...process.env,
-          AGENT_PAYLOAD: JSON.stringify(options)
+          AGENT_PAYLOAD: JSON.stringify(options),
+          MAPSSHIELD_USER_DATA: app.getPath('userData')
         },
         silent: true
       });

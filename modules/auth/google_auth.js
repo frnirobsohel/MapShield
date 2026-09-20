@@ -24,6 +24,7 @@ const {
   clickGoogleNext,
   handleConsentIfPresent
 } = require('../helpers/dom_utils');
+const { captureErrorScreenshot } = require('../helpers/screenshot_paths');
 const {
   generateTOTP,
   isValidSecret,
@@ -177,8 +178,8 @@ async function clickTryAnotherWay(page, cursor, smartClick) {
     }
 
     if (!targetElement) {
-      console.log('⚠️ "Try another way" button not directly found. Capturing screenshot: debug_try_another_way.png');
-      await page.screenshot({ path: 'debug_try_another_way.png' }).catch(() => {});
+      console.log('⚠️ "Try another way" button not directly found. Capturing diagnostic screenshot to report_logs/errors/...');
+      await captureErrorScreenshot(page, 'debug_try_another_way', { fullPage: false }).catch(() => {});
       return false;
     }
 

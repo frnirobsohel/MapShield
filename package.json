@@ -7,6 +7,7 @@
     "start": "node agent.js",
     "app": "electron .",
     "app:dev": "electron .",
+    "test": "node --test test/**/*.test.js",
     "license:create": "node scripts/create_license.js"
   },
   "keywords": [

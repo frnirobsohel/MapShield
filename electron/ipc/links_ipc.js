@@ -6,70 +6,47 @@
 const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
   // IPC: Get Links (from SQLite with fallback to review_links.json or review_urls.txt)
   ipcMain.handle('links:get', async () => {
     try {
       const db = getDatabase();
-      const links = db.getLinks();
-      if (Array.isArray(links) && links.length > 0) {
-        for (const l of links) {
-          if (!l.targetCount || isNaN(l.targetCount)) l.targetCount = 1;
-          if (l.doneCount === undefined) l.doneCount = l.completedCount || 0;
-        }
-        return { success: true, links };
+      const links = db.getLinks() || [];
+      for (const l of links) {
+        if (!l.targetCount || isNaN(l.targetCount)) l.targetCount = 1;
+        if (l.doneCount === undefined) l.doneCount = l.completedCount || 0;
       }
+      return { success: true, links };
     } catch (e) {
       console.warn('[SQLite] links:get notice:', e.message);
+      return { success: true, links: [] };
     }
-
-    const linksJsonPath = path.join(app.getAppPath(), 'review_links.json');
-    if (fs.existsSync(linksJsonPath)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(linksJsonPath, 'utf8'));
-        if (Array.isArray(data) && data.length > 0) {
-          for (const l of data) {
-            if (!l.targetCount || isNaN(l.targetCount)) l.targetCount = 1;
-            if (l.doneCount === undefined) l.doneCount = l.completedCount || 0;
-          }
-          return { success: true, links: data };
-        }
-      } catch (e) {}
-    }
-
-    const urlsPath = path.join(app.getAppPath(), 'review_urls.txt');
-    const links = [];
-    if (fs.existsSync(urlsPath)) {
-      const lines = fs.readFileSync(urlsPath, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      for (let i = 0; i < lines.length; i++) {
-        links.push({
-          id: 'lnk_' + (i + 1) + '_' + Math.random().toString(36).substr(2, 6),
-          url: lines[i],
-          reason: 'spam',
-          mode: 'standard',
-          status: 'queued',
-          targetCount: 1,
-          doneCount: 0,
-          completedCount: 0,
-          lastReportedAt: null
-        });
-      }
-    }
-
-    for (const l of links) {
-      if (!l.targetCount || isNaN(l.targetCount)) l.targetCount = 1;
-      if (l.doneCount === undefined) l.doneCount = l.completedCount || 0;
-    }
-
-    return { success: true, links };
   });
 
-  // IPC: Save Links (writes to SQLite & mirrors review_links.json, review_urls.txt)
+  // IPC: Save Links (writes to SQLite)
   ipcMain.handle('links:save', async (event, links) => {
     try {
+      if (!Array.isArray(links)) {
+        return { success: false, error: 'Invalid links payload: expected an array' };
+      }
+      const validated = links.filter(l => l && typeof l === 'object' && l.url).map(l => ({
+        id: typeof l.id === 'string' && l.id ? l.id : ('lnk_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex')),
+        url: String(l.url).trim(),
+        reason: typeof l.reason === 'string' ? l.reason.trim() : 'spam',
+        mode: typeof l.mode === 'string' ? l.mode.trim() : 'standard',
+        targetCount: Math.max(1, parseInt(l.targetCount, 10) || 1),
+        doneCount: Math.max(0, parseInt(l.doneCount !== undefined ? l.doneCount : (l.completedCount || 0), 10) || 0),
+        completedCount: Math.max(0, parseInt(l.completedCount || 0, 10) || 0),
+        status: typeof l.status === 'string' ? l.status : 'queued',
+        lastReportedAt: l.lastReportedAt || null,
+        lastError: typeof l.lastError === 'string' ? l.lastError : null,
+        businessName: typeof l.businessName === 'string' ? l.businessName.trim() : '',
+        country: typeof l.country === 'string' ? l.country.trim() : 'United States'
+      }));
       const db = getDatabase();
-      db.saveLinks(links || [], true);
+      db.saveLinks(validated, false);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -107,8 +84,10 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
           const u = row.url || row.URL || row.link || row.Link || row.review_url || '';
           if (u && String(u).trim().startsWith('http')) {
             const tCount = parseInt(row.target || row.Target || row.count || row.Count || row.target_count || row.targetCount || row.reports || row.reports_needed || 1, 10) || 1;
+            const bName = String(row.businessName || row.business_name || row.business || row.Business || row.BusinessName || row.name || '').trim();
+            const cName = String(row.country || row.Country || row.region || row.Region || 'United States').trim() || 'United States';
             newLinks.push({
-              id: 'lnk_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+              id: 'lnk_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex'),
               url: String(u).trim(),
               reason: row.reason || row.Reason || 'spam',
               mode: row.mode || row.Mode || 'standard',
@@ -116,7 +95,9 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
               targetCount: Math.max(1, tCount),
               doneCount: 0,
               completedCount: 0,
-              lastReportedAt: null
+              lastReportedAt: null,
+              businessName: bName,
+              country: cName
             });
           }
         }
@@ -130,8 +111,10 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
           const u = parts[0].trim();
           if (u.startsWith('http')) {
             const tCount = parseInt(parts[3] || 1, 10) || 1;
+            const bName = parts[4] ? parts[4].trim() : '';
+            const cName = (parts[5] ? parts[5].trim() : 'United States') || 'United States';
             newLinks.push({
-              id: 'lnk_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+              id: 'lnk_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex'),
               url: u,
               reason: (parts[1] || 'spam').trim(),
               mode: (parts[2] || 'standard').trim(),
@@ -139,7 +122,9 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
               targetCount: Math.max(1, tCount),
               doneCount: 0,
               completedCount: 0,
-              lastReportedAt: null
+              lastReportedAt: null,
+              businessName: bName,
+              country: cName
             });
           }
         }
@@ -150,21 +135,8 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
       try {
         existing = db.getLinks() || [];
       } catch (e) {}
-      if (existing.length === 0) {
-        const linksJsonPath = path.join(app.getAppPath(), 'review_links.json');
-        if (fs.existsSync(linksJsonPath)) {
-          try { existing = JSON.parse(fs.readFileSync(linksJsonPath, 'utf8')); } catch (e) {}
-        }
-      }
       const combined = [...existing, ...newLinks];
-      try {
-        db.saveLinks(combined, true);
-      } catch (e) {
-        const linksJsonPath = path.join(app.getAppPath(), 'review_links.json');
-        fs.writeFileSync(linksJsonPath, JSON.stringify(combined, null, 2), 'utf8');
-        const urlsPath = path.join(app.getAppPath(), 'review_urls.txt');
-        fs.writeFileSync(urlsPath, combined.map(l => l.url).join('\n'), 'utf8');
-      }
+      db.saveLinks(combined, false);
 
       return {
         success: true,

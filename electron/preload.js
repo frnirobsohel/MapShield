@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   clearSession: () => ipcRenderer.invoke('session:clear'),
   checkSessionStatus: () => ipcRenderer.invoke('session:status'),
   openAppFolder: () => ipcRenderer.invoke('folder:open'),
+  openReportsFolder: (subfolder) => ipcRenderer.invoke('folder:openReports', subfolder),
   startAgent: (options) => ipcRenderer.invoke('agent:start', options),
   stopAgent: () => ipcRenderer.invoke('agent:stop'),
   getAuditLogs: (limit) => ipcRenderer.invoke('audit:get', limit),

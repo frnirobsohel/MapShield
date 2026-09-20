@@ -8,12 +8,15 @@ const fs = require('fs');
 const path = require('path');
 const { createCursor } = require('ghost-cursor');
 const { extractReviewDetails, analyzeReviewWithAI, generateLegalNoticeWithAI } = require('../ai/ai_reviewer');
+const { executeFullLegalFlow } = require('./legal_reporter');
 const {
   sleep: defaultSleep,
   humanScroll: defaultHumanScroll,
   humanWanderMouse: defaultHumanWanderMouse,
   smartClick: defaultSmartClick,
-  handleConsentIfPresent
+  handleConsentIfPresent,
+  captureProofScreenshot,
+  captureErrorScreenshot
 } = require('../helpers');
 
 const DEFAULT_MAPS_URL = 'https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7';
@@ -72,7 +75,7 @@ REASON_CONFIGS['personal_information'] = REASON_CONFIGS.personal_info;
 REASON_CONFIGS['nothelpful'] = REASON_CONFIGS.not_helpful;
 
 /**
- * Handles AI Legal Notice Generation, Artifact Saving, and Google Legal Troubleshooter Navigation
+ * Handles AI Legal Notice Generation, Artifact Saving, and Google Legal Troubleshooter & Form Automation
  */
 async function executeLegalNoticeFlow({
   page,
@@ -81,7 +84,10 @@ async function executeLegalNoticeFlow({
   reviewUrl,
   details,
   aiOptions,
-  sleep
+  senderInfo,
+  cursor,
+  smartClick,
+  sleep = defaultSleep
 }) {
   console.log('\n===========================================================');
   console.log('⚖️ [Legal Notice] Initiating AI Legal Complaint & Document...');
@@ -90,6 +96,7 @@ async function executeLegalNoticeFlow({
   const apiKey = aiOptions?.aiApiKey || process.env.AI_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY;
   const provider = aiOptions?.aiProvider || process.env.AI_PROVIDER || 'gemini';
   const model = aiOptions?.aiModel || process.env.AI_MODEL;
+  const businessName = senderInfo?.businessName || details?.businessName || 'the business';
 
   const legalNotice = await generateLegalNoticeWithAI({
     reviewText: details?.reviewText || '',
@@ -98,7 +105,7 @@ async function executeLegalNoticeFlow({
     provider,
     apiKey,
     model,
-    businessName: 'the business'
+    businessName
   });
 
   console.log('📋 [AI Legal Notice Generated]:');
@@ -106,70 +113,25 @@ async function executeLegalNoticeFlow({
   console.log(`   Severity Level:   ${legalNotice.severity?.toUpperCase() || 'HIGH'}`);
   console.log(`   Claim Summary:    ${legalNotice.formalNoticeSummary}`);
 
-  // Save legal notice documents to project disk
-  try {
-    const noticesDir = path.join(process.cwd(), 'legal_notices');
-    if (!fs.existsSync(noticesDir)) {
-      fs.mkdirSync(noticesDir, { recursive: true });
-    }
+  const activeTargetPage = reportPage || page;
 
-    const timestamp = Date.now();
-    const noticeJsonPath = path.join(noticesDir, `notice_${timestamp}.json`);
-    const noticeTxtPath = path.join(noticesDir, `notice_${timestamp}.txt`);
+  // Execute end-to-end 2-stage legal takedown: Troubleshooter (1114905) + Legal Removal Form
+  const legalResult = await executeFullLegalFlow({
+    page,
+    browser: browser || (typeof page?.browser === 'function' ? page.browser() : undefined),
+    reportPage: activeTargetPage,
+    reviewUrl,
+    legalNotice,
+    senderInfo,
+    sleep,
+    smartClick: smartClick || defaultSmartClick,
+    cursor
+  });
 
-    const noticeData = {
-      timestamp: new Date().toISOString(),
-      targetReviewUrl: reviewUrl,
-      reviewerName: details?.reviewerName || 'Anonymous',
-      rating: details?.rating || 'Unknown',
-      reviewText: details?.reviewText || '',
-      aiEvaluation: legalNotice
-    };
-
-    fs.writeFileSync(noticeJsonPath, JSON.stringify(noticeData, null, 2), 'utf8');
-
-    const txtContent = `===============================================================
-FORMAL LEGAL NOTICE & CONTENT REMOVAL DEMAND
-Target Review URL: ${reviewUrl}
-Date: ${new Date().toUTCString()}
-Reviewer: ${details?.reviewerName || 'Anonymous'}
-Rating: ${details?.rating || 'Unknown'}
-===============================================================
-
-LEGAL GROUNDS:
-${legalNotice.legalGrounds} (Severity: ${legalNotice.severity})
-
-INFRINGING CONTENT EXCERPTS:
-${(legalNotice.infringingExcerpts || []).map((e, idx) => `[${idx + 1}] "${e}"`).join('\n')}
-
-LEGAL CLAIM & JUSTIFICATION:
-${legalNotice.legalClaimText}
-
-DEMAND:
-${legalNotice.formalNoticeSummary}
-===============================================================`;
-    fs.writeFileSync(noticeTxtPath, txtContent, 'utf8');
-    console.log(`💾 Legal Notice document saved: legal_notices/notice_${timestamp}.txt`);
-  } catch (err) {
-    console.warn('⚠️ Notice file save warning:', err.message);
-  }
-
-  // Navigate to Google Legal Troubleshooter
-  console.log('🌐 Navigating to Google Legal Removal Troubleshooter...');
-  const legalTargetPage = reportPage || page;
-  try {
-    await legalTargetPage.goto('https://support.google.com/legal/troubleshooter/1114905', {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-    await sleep(3500);
-    await legalTargetPage.screenshot({ path: 'legal_notice_submitted.png', fullPage: true }).catch(() => {});
-    console.log('📸 Legal Notice proof screenshot saved: legal_notice_submitted.png');
-  } catch (err) {
-    console.warn('⚠️ Legal page navigation notice:', err.message);
-  }
-
-  return legalNotice;
+  return {
+    ...legalNotice,
+    legalResult
+  };
 }
 
 /**
@@ -197,7 +159,8 @@ async function runMapsReporter({
   humanScroll,
   reportType = 'standard',
   reportReason = 'spam',
-  aiOptions = {}
+  aiOptions = {},
+  senderInfo = {}
 }) {
   sleep = sleep || defaultSleep;
   humanScroll = humanScroll || defaultHumanScroll;
@@ -295,6 +258,31 @@ async function runMapsReporter({
     }
   }
 
+  // If report mode is purely legal, bypass standard 3-dots report and file directly
+  if (activeType === 'legal' || activeReason === 'legal') {
+    console.log('\n===========================================================');
+    console.log('⚖️ [Legal Notice Mode] Direct Legal Removal Notice Flow');
+    console.log('===========================================================');
+
+    const legalResult = await executeLegalNoticeFlow({
+      page,
+      browser: typeof page?.browser === 'function' ? page.browser() : undefined,
+      reportPage: page,
+      reviewUrl: targetUrl,
+      details,
+      aiOptions,
+      senderInfo,
+      cursor,
+      smartClick,
+      sleep
+    });
+
+    console.log('\n===========================================================');
+    console.log('✅ Google Legal Removal Notice process completed!');
+    console.log('===========================================================');
+    return legalResult;
+  }
+
   // --------------------------------------------------------------------------
   // [Step 1] 3-Dots Button Detection & Click
   // --------------------------------------------------------------------------
@@ -356,8 +344,8 @@ async function runMapsReporter({
   }
 
   if (!threeDotsFound) {
-    console.error('❌ Failed to locate 3-Dots button on review. Saving screenshot to maps_error.png');
-    await page.screenshot({ path: 'maps_error.png', fullPage: true }).catch(() => {});
+    console.error('❌ Failed to locate 3-Dots button on review. Saving diagnostic screenshot to report_logs/errors/');
+    await captureErrorScreenshot(page, 'maps_dots_error');
     throw new Error(`Failed to locate 3-Dots (More Options) button on review page: ${targetUrl}`);
   }
 
@@ -393,7 +381,7 @@ async function runMapsReporter({
   // Fallback evaluate search for Report text
   if (!reportClicked) {
     const evaluateResult = await page.evaluate(() => {
-      const candidates = Array.from(document.querySelectorAll('*'));
+      const candidates = Array.from(document.querySelectorAll('button, a, span, div[role="menuitem"], div[role="button"], li, [role="menuitemradio"], [data-index], [jsaction]'));
       
       const reportEl = candidates.find(el => {
         const t = (el.innerText || el.textContent || '').trim().toLowerCase();
@@ -426,8 +414,8 @@ async function runMapsReporter({
   }
 
   if (!reportClicked) {
-    console.error('❌ Failed to click "Report review" option. Saving screenshot to maps_error.png');
-    await page.screenshot({ path: 'maps_error.png', fullPage: true }).catch(() => {});
+    console.error('❌ Failed to click "Report review" option. Saving diagnostic screenshot to report_logs/errors/');
+    await captureErrorScreenshot(page, 'maps_report_click_error');
     throw new Error('Failed to click "Report review" option from 3-dots dropdown menu');
   }
 
@@ -478,21 +466,7 @@ async function runMapsReporter({
   // --------------------------------------------------------------------------
   // [Step 5] Report Action: Legal Notice vs Standard Category
   // --------------------------------------------------------------------------
-  if (activeType === 'legal') {
-    console.log('\n[Step 5] ⚖️ Initiating dedicated Legal Notice flow...');
-    await executeLegalNoticeFlow({
-      page,
-      browser,
-      reportPage,
-      reviewUrl,
-      details,
-      aiOptions,
-      sleep
-    });
-    return true;
-  }
-
-  // Standard Option Detection & Selection
+  // Standard Option Detection & Selection (legal mode already returned earlier at line 262)
   const reasonCfg = REASON_CONFIGS[activeReason] || REASON_CONFIGS.spam;
   console.log(`\n[Step 5] 🎯 Detecting and selecting "${reasonCfg.label}" option...`);
 
@@ -583,8 +557,8 @@ async function runMapsReporter({
   }
 
   if (!reasonClicked) {
-    console.warn(`⚠️ Could not directly select "${reasonCfg.label}" option. Saving screenshot to maps_reason_error.png`);
-    await reportPage.screenshot({ path: 'maps_reason_error.png', fullPage: true }).catch(() => {});
+    console.warn(`⚠️ Could not directly select "${reasonCfg.label}" option. Saving diagnostic screenshot to report_logs/errors/`);
+    await captureErrorScreenshot(reportPage, 'maps_reason_error');
     throw new Error(`Could not locate or select violation reason "${reasonCfg.label}" in Google report dialog`);
   }
 
@@ -646,8 +620,8 @@ async function runMapsReporter({
   }
 
   if (!submitted) {
-    console.warn('⚠️ Submit button was not automatically found. Saving screenshot to maps_submit_error.png');
-    await reportPage.screenshot({ path: 'maps_submit_error.png', fullPage: true }).catch(() => {});
+    console.warn('⚠️ Submit button was not automatically found. Saving diagnostic screenshot to report_logs/errors/');
+    await captureErrorScreenshot(reportPage, 'maps_submit_btn_error').catch(() => {});
   }
 
   // --------------------------------------------------------------------------
@@ -681,13 +655,13 @@ async function runMapsReporter({
     console.log('ℹ️ Submit button was clicked; awaiting backend confirmation...');
   } else {
     console.warn('⚠️ Neither submit confirmation nor submit button could be confirmed.');
-    await reportPage.screenshot({ path: 'maps_submit_error.png', fullPage: true }).catch(() => {});
+    await captureErrorScreenshot(reportPage, 'maps_submit_error').catch(() => {});
     throw new Error('Report submission could not be verified by confirmation response');
   }
 
   // Capture final proof screenshot
-  await reportPage.screenshot({ path: 'maps_report_spam_submitted.png', fullPage: true }).catch(() => {});
-  console.log('📸 Proof screenshot saved successfully: maps_report_spam_submitted.png');
+  const proofRes = await captureProofScreenshot(reportPage, `proof_${reasonCfg.label.toLowerCase().replace(/\s+/g, '_')}`);
+  console.log(`📸 Proof screenshot saved successfully: ${proofRes ? proofRes.filename : 'report_logs/proofs'}`);
 
   // Dismiss "Done" button if present
   await reportPage.evaluate(() => {
@@ -713,6 +687,9 @@ async function runMapsReporter({
       reviewUrl,
       details,
       aiOptions,
+      senderInfo,
+      cursor,
+      smartClick,
       sleep
     });
   }

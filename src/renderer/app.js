@@ -189,6 +189,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const closeManualAddLink = document.getElementById('closeManualAddLink');
   const manualLinkUrl = document.getElementById('manualLinkUrl');
   const manualLinkCategory = document.getElementById('manualLinkCategory');
+  const manualLinkBusinessName = document.getElementById('manualLinkBusinessName');
+  const manualLinkCountry = document.getElementById('manualLinkCountry');
   const manualLinkTargetCount = document.getElementById('manualLinkTargetCount');
   const btnAddLinkToTable = document.getElementById('btnAddLinkToTable');
 
@@ -217,6 +219,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnSaveEditLink = document.getElementById('btnSaveEditLink');
   const editLinkUrl = document.getElementById('editLinkUrl');
   const editLinkCategory = document.getElementById('editLinkCategory');
+  const editLinkBusinessName = document.getElementById('editLinkBusinessName');
+  const editLinkCountry = document.getElementById('editLinkCountry');
   const editLinkTargetCount = document.getElementById('editLinkTargetCount');
 
   // Legacy element references for fallback compatibility
@@ -236,6 +240,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnToggleAiKey = document.getElementById('btnToggleAiKey');
   const btnSaveAi = document.getElementById('btnSaveAi');
   const aiToast = document.getElementById('aiToast');
+  const inputLegalFullName = document.getElementById('inputLegalFullName');
+  const inputLegalBusinessName = document.getElementById('inputLegalBusinessName');
+  const inputLegalCountry = document.getElementById('inputLegalCountry');
 
   // Proxy Sheet & Table Elements
   const proxyTableBadge = document.getElementById('proxyTableBadge');
@@ -325,6 +332,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   modalClose?.addEventListener('click', () => proofModal.classList.remove('open'));
   proofModal?.addEventListener('click', (e) => {
     if (e.target === proofModal) proofModal.classList.remove('open');
+  });
+
+  const btnOpenProofs = document.getElementById('btnOpenProofsFolder');
+  const btnOpenErrors = document.getElementById('btnOpenErrorsFolder');
+  btnOpenProofs?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.desktopAPI?.openReportsFolder?.('proofs');
+  });
+  btnOpenErrors?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.desktopAPI?.openReportsFolder?.('errors');
   });
 
   btnToggleAiKey?.addEventListener('click', () => {
@@ -1411,6 +1429,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (appConfig.aiApiKey && inputAiKey) inputAiKey.value = appConfig.aiApiKey;
       if (appConfig.aiModel && selectAiModel) selectAiModel.value = appConfig.aiModel;
       if (appConfig.aiInspection !== undefined && checkAiInspection) checkAiInspection.checked = !!appConfig.aiInspection;
+      if (appConfig.legalFullName && inputLegalFullName) inputLegalFullName.value = appConfig.legalFullName;
+      if (appConfig.legalBusinessName && inputLegalBusinessName) inputLegalBusinessName.value = appConfig.legalBusinessName;
+      if (appConfig.legalCountry && inputLegalCountry) inputLegalCountry.value = appConfig.legalCountry;
 
       // Load Installed Browsers asynchronously in the background (zero blocking)
       loadInstalledBrowsers(appConfig.browserPath);
@@ -1493,7 +1514,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       aiProvider: selectAiProvider?.value || 'gemini',
       aiApiKey: inputAiKey?.value.trim() || '',
       aiModel: selectAiModel?.value || 'gemini-2.0-flash',
-      aiInspection: !!checkAiInspection?.checked
+      aiInspection: !!checkAiInspection?.checked,
+      legalFullName: inputLegalFullName?.value.trim() || '',
+      legalBusinessName: inputLegalBusinessName?.value.trim() || '',
+      legalCountry: inputLegalCountry?.value.trim() || 'United States'
     };
     const payload = {
       ...appConfig,
@@ -2541,7 +2565,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           (l.url && l.url.toLowerCase().includes(q)) ||
           (l.reason && l.reason.toLowerCase().includes(q)) ||
           (l.mode && l.mode.toLowerCase().includes(q)) ||
-          (l.status && l.status.toLowerCase().includes(q))
+          (l.status && l.status.toLowerCase().includes(q)) ||
+          (l.businessName && l.businessName.toLowerCase().includes(q)) ||
+          (l.country && l.country.toLowerCase().includes(q))
         );
       });
     }
@@ -2560,7 +2586,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           mode: globalMode,
           reason: globalReason,
           targetCount: 1,
-          doneCount: 0
+          doneCount: 0,
+          businessName: '',
+          country: ''
         }));
       }
       return [];
@@ -2577,7 +2605,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       mode: l.mode || 'standard',
       reason: l.reason || 'spam',
       targetCount: l.targetCount || 1,
-      doneCount: l.doneCount || 0
+      doneCount: l.doneCount || 0,
+      businessName: l.businessName || '',
+      country: l.country || ''
     })).filter(l => Boolean(l.url));
   }
 
@@ -2678,6 +2708,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       tdUrl.appendChild(urlSpan);
+
+      if (lnk.businessName || lnk.country) {
+        const metaLine = document.createElement('div');
+        metaLine.style.display = 'flex';
+        metaLine.style.alignItems = 'center';
+        metaLine.style.gap = '6px';
+        metaLine.style.marginTop = '4px';
+        metaLine.style.fontSize = '11px';
+
+        if (lnk.businessName) {
+          const bBadge = document.createElement('span');
+          bBadge.style.display = 'inline-flex';
+          bBadge.style.alignItems = 'center';
+          bBadge.style.gap = '3px';
+          bBadge.style.background = 'rgba(255, 255, 255, 0.06)';
+          bBadge.style.padding = '1px 6px';
+          bBadge.style.borderRadius = '3px';
+          bBadge.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+          bBadge.innerHTML = `<span style="opacity:0.75;">🏢</span> <span style="color:#e2e8f0; font-weight:500;">${lnk.businessName}</span>`;
+          metaLine.appendChild(bBadge);
+        }
+
+        if (lnk.country) {
+          const cBadge = document.createElement('span');
+          cBadge.style.display = 'inline-flex';
+          cBadge.style.alignItems = 'center';
+          cBadge.style.gap = '3px';
+          cBadge.style.background = 'rgba(56, 189, 248, 0.08)';
+          cBadge.style.padding = '1px 6px';
+          cBadge.style.borderRadius = '3px';
+          cBadge.style.border = '1px solid rgba(56, 189, 248, 0.2)';
+          cBadge.innerHTML = `<span style="opacity:0.75;">📍</span> <span style="color:#7dd3fc;">${lnk.country}</span>`;
+          metaLine.appendChild(cBadge);
+        }
+
+        tdUrl.appendChild(metaLine);
+      }
       tr.appendChild(tdUrl);
 
       // 3. Category / Action
@@ -3100,6 +3167,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       reason = cat;
     }
 
+    const bName = manualLinkBusinessName?.value.trim() || '';
+    const cName = manualLinkCountry?.value.trim() || 'United States';
+
     const newLink = {
       id: 'link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
       url: rawUrl,
@@ -3109,7 +3179,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       targetCount: Math.max(1, tCount),
       doneCount: 0,
       lastReportedAt: null,
-      lastError: null
+      lastError: null,
+      businessName: bName,
+      country: cName
     };
 
     loadedLinks.unshift(newLink);
@@ -3118,6 +3190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateDashboardMetrics();
 
     if (manualLinkUrl) manualLinkUrl.value = '';
+    if (manualLinkBusinessName) manualLinkBusinessName.value = '';
+    if (manualLinkCountry) manualLinkCountry.value = 'United States';
     if (manualLinkTargetCount) manualLinkTargetCount.value = '1';
     showToast(reporterToast, 'New target review link added to sheet.');
   });
@@ -3158,6 +3232,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!editLinkModal) return;
     editingLinkId = lnk.id;
     if (editLinkUrl) editLinkUrl.value = lnk.url;
+    if (editLinkBusinessName) editLinkBusinessName.value = lnk.businessName || '';
+    if (editLinkCountry) editLinkCountry.value = lnk.country || 'United States';
     const currentCat = lnk.mode === 'both' ? 'both' : (lnk.mode === 'legal' ? 'legal' : (lnk.reason || 'ai-auto'));
     if (editLinkCategory) editLinkCategory.value = currentCat;
     if (editLinkTargetCount) editLinkTargetCount.value = lnk.targetCount || 1;
@@ -3166,6 +3242,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function closeEditLinkModalDialog() {
     if (editLinkModal) editLinkModal.style.display = 'none';
+    if (editLinkBusinessName) editLinkBusinessName.value = '';
+    if (editLinkCountry) editLinkCountry.value = 'United States';
     editingLinkId = null;
   }
 
@@ -3185,6 +3263,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const newTarget = parseInt(editLinkTargetCount?.value, 10) || 1;
     lnk.url = newUrl;
+    lnk.businessName = editLinkBusinessName?.value.trim() || '';
+    lnk.country = editLinkCountry?.value.trim() || 'United States';
+
     const cat = editLinkCategory?.value || 'ai-auto';
     if (cat === 'both') {
       lnk.mode = 'both';
@@ -3316,6 +3397,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         aiApiKey: inputAiKey?.value.trim() || '',
         aiModel: selectAiModel?.value || 'gemini-2.0-flash',
         aiInspection: checkAiInspection?.checked || false,
+        legalFullName: inputLegalFullName?.value.trim() || appConfig.legalFullName || '',
+        legalBusinessName: inputLegalBusinessName?.value.trim() || appConfig.legalBusinessName || '',
+        legalCountry: inputLegalCountry?.value.trim() || appConfig.legalCountry || 'United States',
         proxy: proxyCfg
       });
 
@@ -3404,7 +3488,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dashProofStatus) {
         dashProofStatus.textContent = `Captured at ${data.timestamp} (Click to view)`;
       }
-      appendLogToBothTerminals(`\n📸 [Proof Recorded] ${data.filename} captured at ${data.timestamp}`);
+      if (data.category === 'error' || data.folder?.includes('errors')) {
+        appendLogToBothTerminals(`\n⚠️ [Error Screenshot] ${data.filename} saved to report_logs/errors/ at ${data.timestamp}`);
+      } else {
+        appendLogToBothTerminals(`\n📸 [Proof Recorded] ${data.filename} saved to report_logs/proofs/ at ${data.timestamp}`);
+      }
     });
 
     window.desktopAPI.onFinished((data) => {

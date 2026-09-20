@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: file:; connect-src 'self' https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.deepseek.com;">
   <title>MapsShield Pro - Desktop Application</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -283,7 +284,7 @@
 
               <div class="form-group" style="margin-bottom: 0;">
                 <label style="margin-bottom: 8px; display: block;">Installed Browsers</label>
-                <div id="browserChecklist" class="browser-checklist" style="display: flex; flex-direction: column; gap: 8px;">
+                <div id="browserChecklist" class="browser-checklist">
                   <!-- Dynamic browser checkboxes injected by JS -->
                 </div>
                 <div class="toggle-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -369,35 +370,6 @@
               </div>
 
               <div id="aiToast" class="toast-msg"></div>
-            </div>
-
-            <!-- Live Execution Control Card -->
-            <div class="card execution-card" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.7), rgba(30, 41, 59, 0.7)); border: 1px solid var(--border); border-radius: var(--radius-md);">
-              <div style="display: flex; flex-direction: column; gap: 4px;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <h3 style="font-size: 1.05rem; font-weight: 600; margin: 0;">Execution Controller</h3>
-                  <span id="controlProgressStatus" style="font-size: 0.8rem; color: var(--text-muted);">Ready to start</span>
-                  <span id="controlProgressPercent" class="badge badge-neutral" style="font-size: 0.72rem;">0%</span>
-                </div>
-                <div style="width: 280px; height: 5px; background: var(--bg-card); border-radius: 4px; overflow: hidden; margin-top: 6px;">
-                  <div id="controlProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); transition: width 0.3s ease;"></div>
-                </div>
-              </div>
-
-              <div style="display: flex; align-items: center; gap: 12px;">
-                <button id="btnControlStart" class="btn btn-primary" style="padding: 10px 22px; font-weight: 600;">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                  </svg>
-                  <span>Start Reporter Agent</span>
-                </button>
-                <button id="btnControlStop" class="btn btn-danger" style="padding: 10px 20px;" disabled>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-                  </svg>
-                  <span>Stop</span>
-                </button>
-              </div>
             </div>
 
           </div>
@@ -861,8 +833,8 @@
             <div id="reporterToast" class="toast-msg"></div>
 
             <!-- Inline Add Link Drawer -->
-            <div id="manualAddLinkBox" class="sheet-add-drawer" style="display: none;">
-              <div class="drawer-header">
+            <div id="manualAddLinkBox" class="sheet-add-drawer" style="display: none; padding: 14px 18px; background: #080c14; border-bottom: 1px solid var(--border);">
+              <div class="drawer-header" style="margin-bottom: 12px;">
                 <h4 style="display: flex; align-items: center; gap: 8px;">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="12" y1="5" x2="12" y2="19"/>
@@ -872,24 +844,30 @@
                 </h4>
                 <span id="closeManualAddLink" class="modal-close" style="position: static; font-size: 18px; line-height: 1;">&times;</span>
               </div>
-              <div class="drawer-grid" style="grid-template-columns: 3.2fr 2.4fr 1fr auto;">
-                <input type="text" id="manualLinkUrl" placeholder="Target Review URL (e.g. https://maps.app.goo.gl/...)" />
-                <select id="manualLinkCategory" class="custom-select" style="font-size: 0.76rem; padding: 5px 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff;">
-                  <option value="ai-auto" selected>🤖 AI Report</option>
-                  <option value="legal">⚖️ AI Legal</option>
-                  <option value="both">⚡ AI Dual</option>
-                  <option value="offtopic">1. 🚫 Off topic</option>
-                  <option value="spam">2. 🗑️ Spam</option>
-                  <option value="conflict">3. ⚔️ Conflict of interest</option>
-                  <option value="profanity">4. 🤬 Profanity</option>
-                  <option value="harmful">5. ⚠️ Harmful</option>
-                  <option value="bullying">6. 👊 Bullying or harassment</option>
-                  <option value="discrimination">7. 🛑 Discrimination or hate speech</option>
-                  <option value="personal_info">8. 🔒 Personal information</option>
-                  <option value="not_helpful">9. ❓ Not helpful</option>
-                </select>
-                <input type="number" id="manualLinkTargetCount" min="1" value="1" placeholder="Target Reports (e.g. 5)" title="Target Reports Needed" style="font-family: var(--font-mono, monospace); font-size: 0.78rem; padding: 5px 8px;" />
-                <button id="btnAddLinkToTable" class="btn btn-primary btn-sm">Insert Row</button>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: grid; grid-template-columns: 2.5fr 1.2fr; gap: 10px;">
+                  <input type="text" id="manualLinkUrl" placeholder="Target Review URL (e.g. https://maps.app.goo.gl/...)" style="width: 100%;" />
+                  <select id="manualLinkCategory" class="custom-select" style="font-size: 0.76rem; padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); color: #fff;">
+                    <option value="ai-auto" selected>🤖 AI Report</option>
+                    <option value="legal">⚖️ AI Legal</option>
+                    <option value="both">⚡ AI Dual</option>
+                    <option value="offtopic">1. 🚫 Off topic</option>
+                    <option value="spam">2. 🗑️ Spam</option>
+                    <option value="conflict">3. ⚔️ Conflict of interest</option>
+                    <option value="profanity">4. 🤬 Profanity</option>
+                    <option value="harmful">5. ⚠️ Harmful</option>
+                    <option value="bullying">6. 👊 Bullying or harassment</option>
+                    <option value="discrimination">7. 🛑 Discrimination or hate speech</option>
+                    <option value="personal_info">8. 🔒 Personal information</option>
+                    <option value="not_helpful">9. ❓ Not helpful</option>
+                  </select>
+                </div>
+                <div style="display: grid; grid-template-columns: 1.6fr 1.2fr 100px auto; gap: 10px; align-items: center;">
+                  <input type="text" id="manualLinkBusinessName" placeholder="Business Name (Optional - auto-detected)" style="font-size: 0.78rem;" />
+                  <input type="text" id="manualLinkCountry" value="United States" placeholder="Country (e.g. United States)" style="font-size: 0.78rem;" />
+                  <input type="number" id="manualLinkTargetCount" min="1" value="1" placeholder="Reports" title="Target Reports Needed" style="font-family: var(--font-mono, monospace); font-size: 0.78rem; padding: 6px 8px;" />
+                  <button id="btnAddLinkToTable" class="btn btn-primary btn-sm" style="padding: 7px 18px; font-weight: 600;">Insert Row</button>
+                </div>
               </div>
             </div>
 
@@ -1308,6 +1286,16 @@
         </div>
 
         <div class="form-group">
+          <label for="editLinkBusinessName">Business Name (Optional)</label>
+          <input type="text" id="editLinkBusinessName" placeholder="e.g. Target Business Name" />
+        </div>
+
+        <div class="form-group">
+          <label for="editLinkCountry">Country of Residence</label>
+          <input type="text" id="editLinkCountry" placeholder="e.g. United States" />
+        </div>
+
+        <div class="form-group">
           <label for="editLinkTargetCount">Target Reports Needed</label>
           <input type="number" id="editLinkTargetCount" min="1" value="1" placeholder="e.g. 5" />
         </div>
@@ -1329,7 +1317,17 @@
   <!-- Image Lightbox Modal -->
   <div id="proofModal" class="modal">
     <div class="modal-content">
-      <span id="modalClose" class="modal-close">&times;</span>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; width: 100%;">
+        <div style="display: flex; gap: 8px;">
+          <button id="btnOpenProofsFolder" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; cursor: pointer;">
+            📁 Open Proofs Folder
+          </button>
+          <button id="btnOpenErrorsFolder" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; cursor: pointer;">
+            ⚠️ Open Errors Folder
+          </button>
+        </div>
+        <span id="modalClose" class="modal-close" style="position: static; font-size: 24px; cursor: pointer;">&times;</span>
+      </div>
       <img id="modalImg" src="" alt="Proof Full View" />
     </div>
   </div>

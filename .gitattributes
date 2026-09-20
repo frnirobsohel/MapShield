@@ -1,0 +1,19 @@
+# Auto-detect text files and normalize line endings to LF on checkout/commit
+* text=auto eol=lf
+
+# Scripts for Windows shell
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.sqlite binary
+*.db binary
+*.asar binary
+*.exe binary

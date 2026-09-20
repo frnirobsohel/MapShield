@@ -72,9 +72,28 @@ async function applyDeepStealth(page) {
 
     // 6. WebRTC Local IP Leak Guard (Blocks non-proxied host candidates from leaking real IP)
     if (window.RTCPeerConnection) {
-      const origCreateDataChannel = window.RTCPeerConnection.prototype.createDataChannel;
-      const origCreateOffer = window.RTCPeerConnection.prototype.createOffer;
-      // WebRTC is still permitted through proxy via browser flags, but local IP candidates are stripped
+      const OrigRTC = window.RTCPeerConnection;
+      const origAddEventListener = OrigRTC.prototype.addEventListener;
+
+      // Override onicecandidate setter to filter out host candidates that leak local IP
+      const origDescriptor = Object.getOwnPropertyDescriptor(OrigRTC.prototype, 'onicecandidate');
+      if (origDescriptor && origDescriptor.set) {
+        Object.defineProperty(OrigRTC.prototype, 'onicecandidate', {
+          set(handler) {
+            origDescriptor.set.call(this, function(event) {
+              if (event && event.candidate && event.candidate.candidate) {
+                // Strip host candidates containing local/private IPs
+                if (event.candidate.type === 'host' || /candidate.*typ host/.test(event.candidate.candidate)) {
+                  return; // Suppress local IP candidate
+                }
+              }
+              if (typeof handler === 'function') handler(event);
+            });
+          },
+          get: origDescriptor.get,
+          configurable: true
+        });
+      }
     }
   }).catch(() => {});
 }

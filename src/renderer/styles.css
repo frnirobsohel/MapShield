@@ -364,16 +364,81 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0; /* Required for nested scrolling in CSS Flexbox */
 }
 
 .pane {
   display: none;
   height: 100%;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto; /* Enables vertical scrolling so bottom content is never cut off */
+  overflow-x: hidden;
+  padding-right: 6px;
+  padding-bottom: 40px; /* Generous bottom spacing so bottom-most buttons/cards are always visible */
+  box-sizing: border-box;
+  scroll-behavior: smooth;
 }
 
 .pane.active {
   display: flex;
+}
+
+/* Sleek Minimalist Scrollbar for Panes */
+.pane::-webkit-scrollbar {
+  width: 6px;
+}
+.pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pane::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+.pane::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ==========================================================================
+   CONTROL PANEL LAYOUT (MATCHES ABOUT SECTION WIDTH: max-width 820px)
+   ========================================================================== */
+.control-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto 24px auto;
+}
+
+.browser-select-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.browser-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  width: 100%;
+  padding-right: 2px;
+}
+
+.form-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .panes-wrapper {
+    padding: 12px 14px;
+  }
+  .control-layout {
+    gap: 14px;
+  }
+  .browser-checklist {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ==========================================================================

@@ -6,59 +6,59 @@ class UserAgentManager {
   constructor() {
     this.currentIndex = 0;
 
-    // Curated high-reputation modern Desktop User-Agents (Chrome 120-134, Edge, Firefox)
+    // Curated high-reputation modern Desktop User-Agents (Chrome 152-154, Edge 153)
     this.userAgents = [
       // Windows 11 / 10 - Chrome
       {
         os: 'windows',
         browser: 'chrome',
-        version: '133.0.6943.127',
-        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        version: '154.0.6998.45',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36'
       },
       {
         os: 'windows',
         browser: 'chrome',
-        version: '132.0.6834.160',
-        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+        version: '153.0.6943.142',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36'
       },
       {
         os: 'windows',
         browser: 'chrome',
-        version: '131.0.6778.205',
-        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        version: '152.0.6834.196',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'
       },
       // Windows 11 / 10 - Edge
       {
         os: 'windows',
         browser: 'edge',
-        version: '133.0.3065.69',
-        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0'
+        version: '153.0.3065.92',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0'
       },
       {
         os: 'windows',
         browser: 'edge',
-        version: '132.0.2957.140',
-        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0'
+        version: '152.0.2957.160',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0'
       },
       // macOS - Chrome & Safari
       {
         os: 'mac',
         browser: 'chrome',
-        version: '133.0.6943.126',
-        ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        version: '154.0.6998.45',
+        ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36'
       },
       {
         os: 'mac',
         browser: 'safari',
-        version: '17.4',
-        ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
+        version: '18.2',
+        ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15'
       },
       // Linux - Chrome
       {
         os: 'linux',
         browser: 'chrome',
-        version: '133.0.6943.126',
-        ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        version: '153.0.6943.142',
+        ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36'
       }
     ];
   }

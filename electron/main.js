@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, session } = require('electron');
 const path = require('path');
 const { getDatabase } = require(path.join(__dirname, '../database/db'));
 const {
@@ -76,6 +76,18 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Security Hardening: Enforce Content-Security-Policy on all renderer web requests
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: file:; connect-src 'self' https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.deepseek.com;"
+        ]
+      }
+    });
+  });
+
   createWindow();
 
   // Background non-blocking pre-warming of caches so initial renderer IPCs respond in 0ms
