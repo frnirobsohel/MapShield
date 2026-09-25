@@ -17,7 +17,7 @@ const {
   humanWanderMouse,
   humanType
 } = require('../helpers/biometrics');
-const { applyDeepStealth } = require('../helpers/stealth');
+const { applyDeepStealth, attachDialogAutoHandler } = require('../helpers/stealth');
 const {
   smartClick: domSmartClick,
   clickElementByText,
@@ -587,6 +587,31 @@ async function detectCurrentPageStatus(page, targetEmail) {
       return { type: 'LOGGED_IN', description: 'Login completed (Inbox or Google Account active)' };
     }
 
+    // 1.0 Proactively check for Chrome Network Disconnection / Offline Dinosaur Screen
+    const networkOffline = await page.evaluate(() => {
+      const u = (window.location.href || '').toLowerCase();
+      const text = (document.body ? document.body.innerText : '') || '';
+      if (
+        u.startsWith('chrome-error://') ||
+        u.includes('chromewebdata') ||
+        text.includes('DNS_PROBE_FINISHED_NO_INTERNET') ||
+        text.includes('ERR_INTERNET_DISCONNECTED') ||
+        text.includes('Press space to play') ||
+        text.includes('Checking the network cables') ||
+        text.includes('No internet')
+      ) {
+        return {
+          type: 'NETWORK_DISCONNECTED',
+          description: 'net::ERR_INTERNET_DISCONNECTED (DNS_PROBE_FINISHED_NO_INTERNET): Internet connection lost'
+        };
+      }
+      return null;
+    }).catch(() => null);
+
+    if (networkOffline) {
+      return networkOffline;
+    }
+
     // 1.1 Proactively check for critical Google authentication rejection errors
     const authError = await page.evaluate(() => {
       const text = (document.body.innerText || '').toLowerCase();
@@ -602,7 +627,8 @@ async function detectCurrentPageStatus(page, targetEmail) {
       if (text.includes('too many failed attempts') || text.includes('try again in a few hours') || text.includes('account has been disabled') || text.includes('account disabled')) {
         return { type: 'ACCOUNT_LOCKED', description: 'Account temporarily locked or disabled by Google' };
       }
-      const hasTotp = !!document.querySelector('input#totpPin, input[name="totpPin"]');
+      const hasTotp = !!document.querySelector('input#totpPin, input[name="totpPin"]') ||
+                      (text.includes('authenticator') && !text.includes('backup') && !text.includes('8-digit'));
       if (text.includes('this code was already used') || text.includes('code was already used')) {
         return { type: 'INVALID_BACKUP_CODE', description: 'Backup code was already used or invalid' };
       }
@@ -925,6 +951,10 @@ async function ensureGoogleLoggedIn({
 }) {
   const click = smartClick || (target => domSmartClick(currentTab, currentCursor, target, syncActiveTab));
 
+  if (attachDialogAutoHandler) {
+    attachDialogAutoHandler(currentTab);
+  }
+
   // 1. Natural entry to Google
   await naturalBrowseToGmail(currentTab, currentCursor, click, syncActiveTab);
   if (syncActiveTab) await syncActiveTab();
@@ -936,6 +966,9 @@ async function ensureGoogleLoggedIn({
   let loggedIn = false;
   let loopStartTime = Date.now();
   const maxSessionTimeMs = 300000; // 5 mins max
+  let totpAttempts = 0;
+  let totpFailed = false;
+  let backupAttempts = 0;
 
   while (!loggedIn && (Date.now() - loopStartTime < maxSessionTimeMs)) {
     if (syncActiveTab) await syncActiveTab();
@@ -944,13 +977,49 @@ async function ensureGoogleLoggedIn({
     console.log(`\n📍 [Page Detection]: [${pageStatus.type}] -> ${pageStatus.description}`);
 
     switch (pageStatus.type) {
+      case 'NETWORK_DISCONNECTED': {
+        console.error(`\n🛑 [Network Offline]: ${pageStatus.description}`);
+        throw new Error(pageStatus.description);
+      }
+
       case 'WRONG_PASSWORD':
       case 'ACCOUNT_NOT_FOUND':
       case 'BROWSER_UNSUPPORTED':
-      case 'ACCOUNT_LOCKED':
-      case 'INVALID_BACKUP_CODE': {
+      case 'ACCOUNT_LOCKED': {
         console.error(`\n❌ [Auth Critical Error]: ${pageStatus.description}`);
         throw new Error(`Google Authentication Error [${pageStatus.type}]: ${pageStatus.description}`);
+      }
+
+      case 'INVALID_BACKUP_CODE': {
+        backupAttempts++;
+        if (backupAttempts >= 4) {
+          console.error(`\n❌ [Auth Critical Error]: ${pageStatus.description} (Maximum backup code attempts reached)`);
+          throw new Error(`Google Authentication Error [${pageStatus.type}]: ${pageStatus.description}`);
+        }
+        console.warn(`⚠️ [Page Decision] Backup code was rejected or already used (Attempt ${backupAttempts}). Trying next available backup code...`);
+        const rawCode = typeof getBackupCode === 'function' ? await getBackupCode() : null;
+        if (rawCode) {
+          const clean = rawCode.replace(/[\s-]/g, '');
+          console.log(`⌨️  Typing next backup code (${clean.length} digits)...`);
+          const field = await findBackupCodeInput(currentTab);
+          if (field) {
+            await click(field);
+            await sleep(250);
+            await currentTab.keyboard.down('Control');
+            await currentTab.keyboard.press('KeyA');
+            await currentTab.keyboard.up('Control');
+            await currentTab.keyboard.press('Backspace');
+            await sleep(200);
+            await humanType(currentTab, clean, { canMakeMistakes: false });
+            await sleep(1000);
+            await clickGoogleNext(currentTab, 'backupCodeNext', currentCursor, syncActiveTab);
+            await sleep(4000);
+          }
+        } else {
+          console.error(`\n❌ [Auth Critical Error]: No more backup codes remaining in list.`);
+          throw new Error(`Google Authentication Error [${pageStatus.type}]: ${pageStatus.description}`);
+        }
+        break;
       }
 
       case 'LOGGED_IN': {
@@ -1081,9 +1150,26 @@ async function ensureGoogleLoggedIn({
       }
 
       case 'INVALID_TOTP_CODE': {
-        console.warn('⚠️ [Page Decision] Submitted TOTP code was rejected or expired. Clicking "Try another way" for fallback...');
-        await clickTryAnotherWay(currentTab, currentCursor, click);
-        await sleep(2500);
+        totpAttempts++;
+        console.warn(`⚠️ [Page Decision] Submitted TOTP code was rejected by Google (Attempt ${totpAttempts}).`);
+        // Immediately mark TOTP as failed so subsequent choices fallback to Backup Code and prevent looping
+        totpFailed = true;
+        console.log('🔄 Disabling TOTP and clicking "Try another way" to fallback to Backup Code...');
+        const tryClicked = await clickTryAnotherWay(currentTab, currentCursor, click);
+        if (tryClicked) {
+          console.log('⏳ Click sent to "Try another way". Waiting for options list...');
+          for (let waitSec = 0; waitSec < 6; waitSec++) {
+            await sleep(1000);
+            if (syncActiveTab) await syncActiveTab();
+            const nextStatus = await detectCurrentPageStatus(currentTab, email);
+            if (nextStatus.type !== 'INVALID_TOTP_CODE' && nextStatus.type !== '2FA_TOTP_INPUT') {
+              break;
+            }
+          }
+        } else {
+          console.log('⚠️ "Try another way" button not found. Waiting 2.5 seconds...');
+          await sleep(2500);
+        }
         break;
       }
 
@@ -1091,8 +1177,8 @@ async function ensureGoogleLoggedIn({
         console.log('📋 [Page Decision] Alternative verification list options loaded.');
         let optionClicked = false;
 
-        // Priority 1: Google Authenticator (if twoFactor secret is provided and valid)
-        if (twoFactor && isValidSecret(twoFactor)) {
+        // Priority 1: Google Authenticator (ONLY if TOTP has not failed and twoFactor secret is provided and valid)
+        if (!totpFailed && twoFactor && isValidSecret(twoFactor)) {
           console.log('📱 2FA Secret Key detected! Selecting "Google Authenticator" option...');
           optionClicked = await selectAuthenticatorOption(currentTab, currentCursor, click);
           if (optionClicked) {
@@ -1108,6 +1194,8 @@ async function ensureGoogleLoggedIn({
           } else {
             console.log('⚠️ Google Authenticator option not found or could not be clicked. Falling back to backup code...');
           }
+        } else if (totpFailed) {
+          console.log('ℹ️ TOTP previously failed. Bypassing Authenticator and selecting Backup Code directly...');
         }
 
         // Priority 2 / Fallback: 8-digit Backup code
@@ -1132,11 +1220,19 @@ async function ensureGoogleLoggedIn({
       }
 
       case '2FA_TOTP_INPUT': {
-        console.log('🔢 [Page Decision] Google Authenticator 6-digit code page. Preparing TOTP code...');
+        console.log('🔢 [Page Decision] Google Authenticator 6-digit code page.');
+        if (totpFailed) {
+          console.log('⚠️ TOTP is marked as failed. Clicking "Try another way" to switch to Backup code...');
+          await clickTryAnotherWay(currentTab, currentCursor, click);
+          await sleep(2500);
+          break;
+        }
+
         if (twoFactor && isValidSecret(twoFactor)) {
+          totpAttempts++;
           const totpCode = generateTOTP(twoFactor);
           const remaining = getRemainingSeconds();
-          console.log(`🔐 Generated 6-digit TOTP code: [${totpCode}] (~${remaining}s remaining in window)`);
+          console.log(`🔐 Generated 6-digit TOTP code (Attempt ${totpAttempts}): [${totpCode}] (~${remaining}s remaining in window)`);
 
           const field = await findTotpInput(currentTab);
           if (field) {
@@ -1162,6 +1258,7 @@ async function ensureGoogleLoggedIn({
           }
         } else {
           console.log('⚠️ No valid 2FA Secret key available for TOTP code! Falling back to "Try another way"...');
+          totpFailed = true;
           await clickTryAnotherWay(currentTab, currentCursor, click);
           await sleep(2500);
         }

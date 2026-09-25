@@ -372,6 +372,62 @@
               <div id="aiToast" class="toast-msg"></div>
             </div>
 
+            <!-- CAPTCHA AUTO-SOLVER CONFIGURATION -->
+            <div class="card form-card">
+              <div class="card-header">
+                <h2>CAPTCHA Auto-Solver Configuration</h2>
+                <span id="captchaBadge" class="badge badge-cyan">2Captcha Ready</span>
+              </div>
+              <p class="card-desc">Automatically detect and solve Google reCAPTCHA, Cloudflare Turnstile, and challenge puzzles during automated reporting.</p>
+
+              <div class="form-group">
+                <label for="selectCaptchaProvider">CAPTCHA Solver Provider</label>
+                <select id="selectCaptchaProvider" class="custom-select">
+                  <option value="2captcha" selected>2Captcha (Extension / API)</option>
+                  <option value="anticaptcha">Anti-Captcha</option>
+                  <option value="capmonster">CapMonster</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label id="labelCaptchaKey" for="inputCaptchaKey">2Captcha API Key</label>
+                <div class="password-box">
+                  <input type="password" id="inputCaptchaKey" placeholder="Enter your 2Captcha API key..." />
+                  <button type="button" id="btnToggleCaptchaKey" class="btn-eye" title="Toggle Show/Hide">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                </div>
+                <span class="input-help">Your API key is saved securely in your local SQLite database.</span>
+              </div>
+
+              <div class="form-group">
+                <label>Automatic CAPTCHA Solving</label>
+                <div class="toggle-row">
+                  <label class="switch">
+                    <input type="checkbox" id="checkCaptchaAutoSolve" checked>
+                    <span class="slider"></span>
+                  </label>
+                  <span class="switch-label">Automatically solve any CAPTCHA challenge without human intervention</span>
+                </div>
+              </div>
+
+              <div class="button-row mt-20">
+                <button id="btnSaveCaptcha" class="btn btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  <span>Save CAPTCHA Configuration</span>
+                </button>
+              </div>
+
+              <div id="captchaToast" class="toast-msg"></div>
+            </div>
+
           </div>
         </section>
 
@@ -895,16 +951,18 @@
               <table class="sheet-table" id="linksTable">
                 <colgroup>
                   <col style="width: 44px;">
-                  <col style="width: 38%;">
-                  <col style="width: 24%;">
-                  <col style="width: 13%;">
-                  <col style="width: 13%;">
-                  <col style="width: 100px;">
+                  <col style="width: 32%;">
+                  <col style="width: 18%;">
+                  <col style="width: 18%;">
+                  <col style="width: 11%;">
+                  <col style="width: 11%;">
+                  <col style="width: 86px;">
                 </colgroup>
                 <thead>
                   <tr>
                     <th class="th-index">#</th>
                     <th>Target Review URL</th>
+                    <th>Business / Target</th>
                     <th>Category / Action</th>
                     <th>Status</th>
                     <th>Progress</th>
@@ -1335,7 +1393,10 @@
   <!-- Modular Frontend Architecture -->
   <script src="js/utils/helpers.js"></script>
   <script src="js/state.js"></script>
+  <script src="js/components/terminal.js"></script>
+  <script src="js/components/ai.js"></script>
   <script src="js/components/about.js"></script>
+  <script src="js/components/captcha.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

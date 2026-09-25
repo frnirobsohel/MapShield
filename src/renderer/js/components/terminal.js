@@ -17,6 +17,11 @@
       this.proofModal = document.getElementById('proofModal');
       this.modalImg = document.getElementById('modalImg');
       this.modalClose = document.getElementById('modalClose');
+      this.dashProofChip = document.getElementById('dashProofChip');
+      this.dashProofStatus = document.getElementById('dashProofStatus');
+      this.btnOpenProofs = document.getElementById('btnOpenProofsFolder');
+      this.btnOpenErrors = document.getElementById('btnOpenErrorsFolder');
+      this.latestProofBase64 = null;
 
       this.initEvents();
     }
@@ -37,6 +42,29 @@
       this.proofModal?.addEventListener('click', (e) => {
         if (e.target === this.proofModal) this.proofModal.classList.remove('open');
       });
+
+      this.dashProofChip?.addEventListener('click', () => {
+        if (this.latestProofBase64) {
+          this.openProofModal(this.latestProofBase64);
+        }
+      });
+
+      this.btnOpenProofs?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.desktopAPI?.openReportsFolder?.('proofs');
+      });
+
+      this.btnOpenErrors?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.desktopAPI?.openReportsFolder?.('errors');
+      });
+    }
+
+    setLatestProof(base64Src, timestamp) {
+      this.latestProofBase64 = base64Src;
+      if (this.dashProofStatus && timestamp) {
+        this.dashProofStatus.textContent = `Captured at ${timestamp} (Click to view)`;
+      }
     }
 
     openProofModal(base64Src) {
@@ -47,8 +75,8 @@
     }
 
     appendLog(text, isErr = false) {
-      if (!text) return;
-      const lines = text.split('\n');
+      if (text === undefined || text === null) return;
+      const lines = String(text).split('\n');
 
       lines.forEach(line => {
         if (!line && lines.length > 1) return;
@@ -57,11 +85,11 @@
         let colorClass = '';
         if (isErr || lower.includes('❌') || lower.includes('error')) {
           colorClass = 'log-error';
-        } else if (lower.includes('✅') || lower.includes('success') || lower.includes('completed') || lower.includes('🏆')) {
+        } else if (lower.includes('✅') || lower.includes('success') || lower.includes('completed') || lower.includes('🏆') || lower.includes('🎉') || lower.includes('solved') || lower.includes('bypassed')) {
           colorClass = 'log-success';
         } else if (lower.includes('⚠️') || lower.includes('warning')) {
           colorClass = 'log-warning';
-        } else if (lower.includes('👉') || lower.includes('🔍') || lower.includes('🌐') || lower.includes('step') || lower.includes('🎯') || lower.includes('⚖️')) {
+        } else if (lower.includes('👉') || lower.includes('🔍') || lower.includes('🌐') || lower.includes('step') || lower.includes('🎯') || lower.includes('⚖️') || lower.includes('🧩') || lower.includes('captcha')) {
           colorClass = 'log-info';
         }
 

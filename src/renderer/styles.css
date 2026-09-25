@@ -1365,7 +1365,7 @@ input:checked + .slider:before {
 
 .sheet-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 920px;
   table-layout: fixed;
   border-collapse: collapse;
   empty-cells: show;

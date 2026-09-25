@@ -19,7 +19,28 @@ const { encrypt, decrypt } = require('../modules/helpers/crypto_utils');
 
 class DatabaseService {
   constructor(dbPath) {
-    this.dbPath = dbPath || path.join(__dirname, 'mapsshield.sqlite');
+    if (dbPath) {
+      this.dbPath = dbPath;
+    } else {
+      const defaultDir = process.env.MAPSSHIELD_USER_DATA
+        ? path.join(process.env.MAPSSHIELD_USER_DATA, 'database')
+        : __dirname;
+      const targetDbPath = path.join(defaultDir, 'mapsshield.sqlite');
+
+      // Auto-migration: If target is in userData and doesn't exist yet, but legacy __dirname db exists, copy it over!
+      if (process.env.MAPSSHIELD_USER_DATA && !fs.existsSync(targetDbPath)) {
+        const legacyPath = path.join(__dirname, 'mapsshield.sqlite');
+        if (fs.existsSync(legacyPath)) {
+          try {
+            if (!fs.existsSync(defaultDir)) {
+              fs.mkdirSync(defaultDir, { recursive: true });
+            }
+            fs.copyFileSync(legacyPath, targetDbPath);
+          } catch (_) {}
+        }
+      }
+      this.dbPath = targetDbPath;
+    }
     this.init();
   }
 
@@ -119,14 +140,22 @@ class DatabaseService {
 
   // --- Auto Migration from Existing JSON files ---
   autoMigrateFromJson() {
-    const rootDir = path.resolve(__dirname, '..');
+    const findJson = (filename) => {
+      if (process.env.MAPSSHIELD_USER_DATA) {
+        const userPath = path.join(process.env.MAPSSHIELD_USER_DATA, filename);
+        if (fs.existsSync(userPath)) return userPath;
+      }
+      const devPath = path.join(path.resolve(__dirname, '..'), filename);
+      if (fs.existsSync(devPath)) return devPath;
+      return null;
+    };
 
     // 1. Migrate accounts.json
     try {
       const accountsCount = this.db.prepare('SELECT COUNT(*) as count FROM accounts').get().count;
       if (accountsCount === 0) {
-        const accountsJsonPath = path.join(rootDir, 'accounts.json');
-        if (fs.existsSync(accountsJsonPath)) {
+        const accountsJsonPath = findJson('accounts.json');
+        if (accountsJsonPath && fs.existsSync(accountsJsonPath)) {
           const list = JSON.parse(fs.readFileSync(accountsJsonPath, 'utf8'));
           if (Array.isArray(list) && list.length > 0) {
             this.saveAccounts(list, false);
@@ -141,8 +170,8 @@ class DatabaseService {
     try {
       const linksCount = this.db.prepare('SELECT COUNT(*) as count FROM review_links').get().count;
       if (linksCount === 0) {
-        const linksJsonPath = path.join(rootDir, 'review_links.json');
-        if (fs.existsSync(linksJsonPath)) {
+        const linksJsonPath = findJson('review_links.json');
+        if (linksJsonPath && fs.existsSync(linksJsonPath)) {
           const list = JSON.parse(fs.readFileSync(linksJsonPath, 'utf8'));
           if (Array.isArray(list) && list.length > 0) {
             this.saveLinks(list, false);
@@ -157,8 +186,8 @@ class DatabaseService {
     try {
       const proxiesCount = this.db.prepare('SELECT COUNT(*) as count FROM proxies').get().count;
       if (proxiesCount === 0) {
-        const proxiesJsonPath = path.join(rootDir, 'proxies.json');
-        if (fs.existsSync(proxiesJsonPath)) {
+        const proxiesJsonPath = findJson('proxies.json');
+        if (proxiesJsonPath && fs.existsSync(proxiesJsonPath)) {
           const list = JSON.parse(fs.readFileSync(proxiesJsonPath, 'utf8'));
           if (Array.isArray(list) && list.length > 0) {
             this.saveProxies(list, false);
@@ -173,7 +202,7 @@ class DatabaseService {
     try {
       const settingsCount = this.db.prepare('SELECT COUNT(*) as count FROM app_settings').get().count;
       if (settingsCount === 0) {
-        const envPath = path.join(rootDir, '.env');
+        const envPath = findJson('.env');
         const settingsToMigrate = {
           defaultUrl: 'https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7',
           urls: ['https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7'],
@@ -186,7 +215,7 @@ class DatabaseService {
           aiModel: 'gemini-2.0-flash',
           aiInspection: false
         };
-        if (fs.existsSync(envPath)) {
+        if (envPath && fs.existsSync(envPath)) {
           const lines = fs.readFileSync(envPath, 'utf8').split('\n');
           for (const line of lines) {
             const trimmed = line.trim();
@@ -232,13 +261,35 @@ class DatabaseService {
     if (!Array.isArray(accounts)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
-      this.db.exec('DELETE FROM accounts;');
+      const incomingEmails = accounts
+        .map(a => a && a.email ? String(a.email).trim().toLowerCase() : '')
+        .filter(Boolean);
+
+      if (incomingEmails.length > 0) {
+        const placeholders = incomingEmails.map(() => '?').join(',');
+        const deleteStmt = this.db.prepare(`DELETE FROM accounts WHERE LOWER(email) NOT IN (${placeholders})`);
+        deleteStmt.run(...incomingEmails);
+      } else {
+        this.db.exec('DELETE FROM accounts;');
+      }
+
       const stmt = this.db.prepare(`
         INSERT INTO accounts (id, email, password, twoFactor, backupCode, used, usedCount, lastUsedAt, status, lastError, updatedAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(email) DO UPDATE SET
+          password = excluded.password,
+          twoFactor = excluded.twoFactor,
+          backupCode = excluded.backupCode,
+          used = excluded.used,
+          usedCount = CASE WHEN excluded.status = 'active' AND excluded.usedCount = 0 THEN 0 WHEN excluded.usedCount > 0 THEN excluded.usedCount ELSE accounts.usedCount END,
+          lastUsedAt = COALESCE(excluded.lastUsedAt, accounts.lastUsedAt),
+          status = excluded.status,
+          lastError = excluded.lastError,
+          updatedAt = excluded.updatedAt
       `);
       for (let i = 0; i < accounts.length; i++) {
         const a = accounts[i];
+        if (!a || !a.email) continue;
         const id = a.id || ('acc_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
@@ -263,23 +314,45 @@ class DatabaseService {
 
   updateAccountStatus(email, statusData) {
     if (!email) return;
-    const stmt = this.db.prepare(`
-      UPDATE accounts 
-      SET used = 1,
-          usedCount = usedCount + 1,
-          status = ?,
-          lastError = ?,
-          lastUsedAt = ?,
-          updatedAt = ?
-      WHERE LOWER(email) = LOWER(?)
-    `);
-    stmt.run(
-      statusData.status || 'success',
-      statusData.error || null,
-      statusData.timestamp || new Date().toLocaleTimeString(),
-      new Date().toISOString(),
-      email.trim()
-    );
+    const isSuccess = statusData.status === 'success' || statusData.status === 'completed';
+    const shouldMarkUsed = isSuccess && statusData.used !== false;
+    if (shouldMarkUsed) {
+      const stmt = this.db.prepare(`
+        UPDATE accounts 
+        SET used = 1,
+            usedCount = usedCount + 1,
+            status = ?,
+            lastError = ?,
+            lastUsedAt = ?,
+            updatedAt = ?
+        WHERE LOWER(email) = LOWER(?)
+      `);
+      stmt.run(
+        statusData.status || 'success',
+        statusData.error || null,
+        statusData.timestamp || new Date().toLocaleTimeString(),
+        new Date().toISOString(),
+        email.trim()
+      );
+    } else {
+      // Preserve account as unused: if explicitly used === false/0, ensure used remains 0
+      const forceUnused = statusData.used === false || statusData.used === 0;
+      const stmt = this.db.prepare(`
+        UPDATE accounts 
+        SET used = CASE WHEN ? THEN 0 ELSE used END,
+            status = ?,
+            lastError = ?,
+            updatedAt = ?
+        WHERE LOWER(email) = LOWER(?)
+      `);
+      stmt.run(
+        forceUnused ? 1 : 0,
+        statusData.status || 'ready',
+        statusData.error || null,
+        new Date().toISOString(),
+        email.trim()
+      );
+    }
   }
 
   clearAccounts() {
@@ -330,13 +403,37 @@ class DatabaseService {
     if (!Array.isArray(links)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
-      this.db.exec('DELETE FROM review_links;');
+      const incomingUrls = links
+        .map(l => l && l.url ? String(l.url).trim() : '')
+        .filter(Boolean);
+
+      if (incomingUrls.length > 0) {
+        const placeholders = incomingUrls.map(() => '?').join(',');
+        const deleteStmt = this.db.prepare(`DELETE FROM review_links WHERE url NOT IN (${placeholders})`);
+        deleteStmt.run(...incomingUrls);
+      } else {
+        this.db.exec('DELETE FROM review_links;');
+      }
+
       const stmt = this.db.prepare(`
         INSERT INTO review_links (id, url, reason, mode, targetCount, doneCount, completedCount, status, lastReportedAt, lastError, updatedAt, businessName, country)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+          reason = excluded.reason,
+          mode = excluded.mode,
+          targetCount = excluded.targetCount,
+          doneCount = CASE WHEN excluded.doneCount > 0 THEN excluded.doneCount ELSE review_links.doneCount END,
+          completedCount = CASE WHEN excluded.completedCount > 0 THEN excluded.completedCount ELSE review_links.completedCount END,
+          status = excluded.status,
+          lastReportedAt = COALESCE(excluded.lastReportedAt, review_links.lastReportedAt),
+          lastError = excluded.lastError,
+          updatedAt = excluded.updatedAt,
+          businessName = excluded.businessName,
+          country = excluded.country
       `);
       for (let i = 0; i < links.length; i++) {
         const l = links[i];
+        if (!l || !l.url) continue;
         const id = l.id || ('lnk_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
@@ -444,6 +541,31 @@ class DatabaseService {
     this.db.exec('DELETE FROM proxies;');
   }
 
+  updateProxyStatus(proxyIdentifier, statusData = {}) {
+    if (!proxyIdentifier) return;
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE proxies
+        SET status = ?,
+            error = ?,
+            lastTestedAt = ?,
+            updatedAt = ?
+        WHERE formatted = ? OR id = ? OR (host || ':' || port) = ?
+      `);
+      stmt.run(
+        statusData.status || 'error',
+        statusData.error || null,
+        statusData.timestamp || new Date().toISOString(),
+        new Date().toISOString(),
+        proxyIdentifier,
+        proxyIdentifier,
+        proxyIdentifier
+      );
+    } catch (e) {
+      console.warn('[SQLite] updateProxyStatus notice:', e.message);
+    }
+  }
+
   // --- AUDIT LOGS OPERATIONS ---
   recordAuditLog(entry) {
     const stmt = this.db.prepare(`
@@ -482,19 +604,22 @@ class DatabaseService {
       aiInspection: false,
       legalFullName: '',
       legalBusinessName: '',
-      legalCountry: 'United States'
+      legalCountry: 'United States',
+      captchaProvider: '2captcha',
+      captchaApiKey: '',
+      captchaAutoSolve: true
     };
 
     try {
       const rows = this.db.prepare('SELECT key, value FROM app_settings').all();
       for (const row of rows) {
         if (row.key === 'data' || row.key === 'success') continue;
-        if (row.key === 'headless' || row.key === 'aiInspection') {
+        if (row.key === 'headless' || row.key === 'aiInspection' || row.key === 'captchaAutoSolve') {
           defaultSettings[row.key] = row.value === 'true' || row.value === '1';
         } else if (row.key === 'urls') {
           try { defaultSettings.urls = JSON.parse(row.value); } catch (e) { defaultSettings.urls = [row.value]; }
-        } else if (row.key === 'aiApiKey') {
-          // Decrypt AI API key on read
+        } else if (row.key === 'aiApiKey' || row.key === 'captchaApiKey') {
+          // Decrypt sensitive API keys on read
           defaultSettings[row.key] = decrypt(row.value);
         } else {
           defaultSettings[row.key] = row.value;
@@ -518,14 +643,34 @@ class DatabaseService {
       for (const [k, v] of Object.entries(settings)) {
         if (v === undefined || v === null || k === 'data' || k === 'success') continue;
         const valStr = typeof v === 'object' ? JSON.stringify(v) : String(v);
-        // Encrypt sensitive settings before storing
-        const storeVal = (k === 'aiApiKey') ? encrypt(valStr) : valStr;
+        // Encrypt sensitive API keys before storing
+        const storeVal = (k === 'aiApiKey' || k === 'captchaApiKey') ? encrypt(valStr) : valStr;
         stmt.run(k, storeVal, new Date().toISOString());
       }
       this.db.exec('COMMIT;');
+
+      // Auto-sync 2captcha extension config if extension folder exists
+      if (settings.captchaApiKey) {
+        try {
+          const extConfigPath = path.join(__dirname, '..', 'extensions', '2captcha-solver', 'common', 'config.js');
+          if (fs.existsSync(extConfigPath)) {
+            let confContent = fs.readFileSync(extConfigPath, 'utf8');
+            confContent = confContent.replace(/apiKey:\s*(['"][^'"]*['"]|null)/, `apiKey: "${settings.captchaApiKey}"`);
+            fs.writeFileSync(extConfigPath, confContent, 'utf8');
+          }
+        } catch (_) {}
+      }
     } catch (e) {
       this.db.exec('ROLLBACK;');
       throw e;
+    }
+  }
+
+  close() {
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch (e) {}
     }
   }
 }

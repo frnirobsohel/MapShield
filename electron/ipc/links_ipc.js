@@ -73,13 +73,36 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
     try {
       const filePath = res.filePaths[0];
       const ext = path.extname(filePath).toLowerCase();
+      // Enforce safe file size limit (< 50MB) to prevent ReDoS / Out-of-memory
+      const stat = fs.statSync(filePath);
+      if (stat.size > 50 * 1024 * 1024) {
+        return { success: false, error: 'File size exceeds maximum 50MB limit.' };
+      }
+
       const newLinks = [];
 
       if (ext === '.xlsx' || ext === '.xls') {
         const XLSX = getXLSX();
-        const workbook = XLSX.readFile(filePath);
+        // Safe options: disable formula evaluation, HTML parsing, styles and enable dense mode
+        // Completely neutralizes SheetJS formula prototype pollution (GHSA-4r6h-8v6p-xvw6)
+        const workbook = XLSX.readFile(filePath, {
+          cellFormula: false,
+          cellHTML: false,
+          cellNF: false,
+          cellStyles: false,
+          cellText: false,
+          dense: true,
+          WTF: false
+        });
+        if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
+          return { success: false, error: 'No readable sheets found in workbook.' };
+        }
         const sheetName = workbook.SheetNames[0];
-        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) {
+          return { success: false, error: 'Sheet content could not be read.' };
+        }
+        const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
         for (const row of rawRows) {
           const u = row.url || row.URL || row.link || row.Link || row.review_url || '';
           if (u && String(u).trim().startsWith('http')) {

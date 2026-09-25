@@ -26,21 +26,25 @@ function killActiveAgentProcess() {
 }
 
 function registerAgentIpc({ mainWindow, app, getDatabase }) {
-  // IPC: Clear Session (cleans both legacy and isolated account sessions)
+  // IPC: Clear Session (cleans both userData and project account sessions)
   ipcMain.handle('session:clear', async () => {
     try {
-      // Use userData path (always writable) instead of appPath (read-only in asar)
-      const sessionDir = path.join(app.getPath('userData'), 'chrome_session');
-      const multiSessionsDir = path.join(app.getPath('userData'), 'chrome_sessions');
+      const targetDirs = [
+        path.join(app.getPath('userData'), 'chrome_session'),
+        path.join(app.getPath('userData'), 'chrome_sessions'),
+        path.join(app.getPath('userData'), 'cache'),
+        path.join(app.getAppPath(), 'chrome_session'),
+        path.join(app.getAppPath(), 'chrome_sessions')
+      ];
       let cleared = false;
 
-      if (fs.existsSync(sessionDir)) {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
-        cleared = true;
-      }
-      if (fs.existsSync(multiSessionsDir)) {
-        fs.rmSync(multiSessionsDir, { recursive: true, force: true });
-        cleared = true;
+      for (const dir of targetDirs) {
+        if (fs.existsSync(dir)) {
+          try {
+            fs.rmSync(dir, { recursive: true, force: true });
+            cleared = true;
+          } catch (_) {}
+        }
       }
 
       if (cleared) {
@@ -54,9 +58,23 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
 
   // IPC: Check Session Status
   ipcMain.handle('session:status', async () => {
-    const sessionDir = path.join(app.getPath('userData'), 'chrome_session');
-    const multiSessionsDir = path.join(app.getPath('userData'), 'chrome_sessions');
-    const hasSession = fs.existsSync(sessionDir) || (fs.existsSync(multiSessionsDir) && fs.readdirSync(multiSessionsDir).length > 0);
+    const checkDirs = [
+      path.join(app.getPath('userData'), 'chrome_session'),
+      path.join(app.getPath('userData'), 'chrome_sessions'),
+      path.join(app.getAppPath(), 'chrome_session'),
+      path.join(app.getAppPath(), 'chrome_sessions')
+    ];
+    let hasSession = false;
+    for (const dir of checkDirs) {
+      if (fs.existsSync(dir)) {
+        try {
+          if (fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length > 0) {
+            hasSession = true;
+            break;
+          }
+        } catch (_) {}
+      }
+    }
     return { hasSession };
   });
 
@@ -73,11 +91,13 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
         cwd: app.getAppPath(),
         env: {
           ...process.env,
-          AGENT_PAYLOAD: JSON.stringify(options),
           MAPSSHIELD_USER_DATA: app.getPath('userData')
         },
         silent: true
       });
+
+      // High-speed native IPC transfer to bypass Windows OS env block size limits & prevent memory dumping
+      activeAgentProcess.send({ type: 'init_payload', payload: options });
 
       activeAgentProcess.stdout.on('data', (data) => {
         const text = data.toString();

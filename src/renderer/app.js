@@ -1329,65 +1329,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Headless Toggle Handler (Removed by user request)
 
-  // Console Logging (Dual Output to Dashboard & Control consoles with 600 max lines FIFO capping)
-  const MAX_TERMINAL_LINES = 600;
+  // Modular Terminal Component Instance
+  const terminalInstance = window.TerminalComponent ? new window.TerminalComponent() : null;
+  window.terminalComponent = terminalInstance;
 
   function appendLogToBothTerminals(text, isErr = false) {
-    if (text === undefined || text === null) return;
-    const lines = String(text).split('\n');
-    lines.forEach(line => {
-      if (!line && lines.length > 1) return;
-
-      const lower = line.toLowerCase();
-      let colorClass = '';
-      if (isErr || lower.includes('❌') || lower.includes('error')) {
-        colorClass = 'log-error';
-      } else if (lower.includes('✅') || lower.includes('success') || lower.includes('completed') || lower.includes('🏆')) {
-        colorClass = 'log-success';
-      } else if (lower.includes('⚠️') || lower.includes('warning')) {
-        colorClass = 'log-warning';
-      } else if (lower.includes('👉') || lower.includes('🔍') || lower.includes('🌐') || lower.includes('step') || lower.includes('🎯') || lower.includes('⚖️')) {
-        colorClass = 'log-info';
-      }
-
-      // Add to Dashboard Terminal
-      if (dashConsoleOutput) {
-        const dDiv = document.createElement('div');
-        dDiv.className = 'log-line ' + colorClass;
-        dDiv.textContent = line;
-        dashConsoleOutput.appendChild(dDiv);
-        while (dashConsoleOutput.childNodes.length > MAX_TERMINAL_LINES) {
-          dashConsoleOutput.removeChild(dashConsoleOutput.firstChild);
-        }
-      }
-
-      // Add to Control Terminal
-      if (controlConsoleOutput) {
-        const cDiv = document.createElement('div');
-        cDiv.className = 'log-line ' + colorClass;
-        cDiv.textContent = line;
-        controlConsoleOutput.appendChild(cDiv);
-        while (controlConsoleOutput.childNodes.length > MAX_TERMINAL_LINES) {
-          controlConsoleOutput.removeChild(controlConsoleOutput.firstChild);
-        }
-      }
-    });
-
-    if (dashAutoScroll?.checked && dashConsoleOutput) {
-      dashConsoleOutput.scrollTop = dashConsoleOutput.scrollHeight;
-    }
-    if (controlAutoScroll?.checked && controlConsoleOutput) {
-      controlConsoleOutput.scrollTop = controlConsoleOutput.scrollHeight;
+    if (terminalInstance) {
+      terminalInstance.appendLog(text, isErr);
+    } else {
+      console.log(text);
     }
   }
-
-  btnClearDashConsole?.addEventListener('click', () => {
-    if (dashConsoleOutput) dashConsoleOutput.innerHTML = '<div class="log-line log-system">Console cleared.</div>';
-  });
-
-  btnClearControlConsole?.addEventListener('click', () => {
-    if (controlConsoleOutput) controlConsoleOutput.innerHTML = '<div class="log-line log-system">Console cleared.</div>';
-  });
 
   // Toast Helper
   function showToast(elem, msg, isSuccess = true) {
@@ -1421,14 +1373,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         selectCategory.value = appConfig.reportReason;
       }
 
-      // AI Config
-      if (appConfig.aiProvider && selectAiProvider) {
-        selectAiProvider.value = appConfig.aiProvider;
-        selectAiProvider.dispatchEvent(new Event('change')); // trigger options update
+      // AI Config (Delegated to modular AIComponent)
+      if (window.aiComponent) {
+        window.aiComponent.applyConfig(appConfig);
+      } else {
+        if (appConfig.aiProvider && selectAiProvider) {
+          selectAiProvider.value = appConfig.aiProvider;
+          selectAiProvider.dispatchEvent(new Event('change')); // trigger options update
+        }
+        if (appConfig.aiApiKey && inputAiKey) inputAiKey.value = appConfig.aiApiKey;
+        if (appConfig.aiModel && selectAiModel) selectAiModel.value = appConfig.aiModel;
+        if (appConfig.aiInspection !== undefined && checkAiInspection) checkAiInspection.checked = !!appConfig.aiInspection;
       }
-      if (appConfig.aiApiKey && inputAiKey) inputAiKey.value = appConfig.aiApiKey;
-      if (appConfig.aiModel && selectAiModel) selectAiModel.value = appConfig.aiModel;
-      if (appConfig.aiInspection !== undefined && checkAiInspection) checkAiInspection.checked = !!appConfig.aiInspection;
+
+      // CAPTCHA Config (Delegated to modular CaptchaComponent)
+      if (window.captchaComponent) {
+        window.captchaComponent.applyConfig(appConfig);
+      }
       if (appConfig.legalFullName && inputLegalFullName) inputLegalFullName.value = appConfig.legalFullName;
       if (appConfig.legalBusinessName && inputLegalBusinessName) inputLegalBusinessName.value = appConfig.legalBusinessName;
       if (appConfig.legalCountry && inputLegalCountry) inputLegalCountry.value = appConfig.legalCountry;
@@ -2626,7 +2587,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     tdUrl.innerHTML = showEmptyHint ? `<span class="sheet-empty-hint">No target review links loaded. Click "Import (TXT / CSV)" or "Add Link" above...</span>` : '&nbsp;';
     tr.appendChild(tdUrl);
 
-    // 3. Category / Action
+    // 3. Business / Target
+    const tdBusiness = document.createElement('td');
+    tdBusiness.innerHTML = '&nbsp;';
+    tr.appendChild(tdBusiness);
+
+    // 4. Category / Action
     const tdCat = document.createElement('td');
     tdCat.innerHTML = '&nbsp;';
     tr.appendChild(tdCat);
@@ -2695,7 +2661,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       tdIdx.textContent = startIndex + idx + 1;
       tr.appendChild(tdIdx);
 
-      // 2. Target Review URL
+      // 2. Target Review URL (Strict single line with ellipsis)
       const tdUrl = document.createElement('td');
       const urlSpan = document.createElement('span');
       urlSpan.className = 'sheet-cell-text text-sky';
@@ -2708,46 +2674,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       tdUrl.appendChild(urlSpan);
-
-      if (lnk.businessName || lnk.country) {
-        const metaLine = document.createElement('div');
-        metaLine.style.display = 'flex';
-        metaLine.style.alignItems = 'center';
-        metaLine.style.gap = '6px';
-        metaLine.style.marginTop = '4px';
-        metaLine.style.fontSize = '11px';
-
-        if (lnk.businessName) {
-          const bBadge = document.createElement('span');
-          bBadge.style.display = 'inline-flex';
-          bBadge.style.alignItems = 'center';
-          bBadge.style.gap = '3px';
-          bBadge.style.background = 'rgba(255, 255, 255, 0.06)';
-          bBadge.style.padding = '1px 6px';
-          bBadge.style.borderRadius = '3px';
-          bBadge.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-          bBadge.innerHTML = `<span style="opacity:0.75;">🏢</span> <span style="color:#e2e8f0; font-weight:500;">${lnk.businessName}</span>`;
-          metaLine.appendChild(bBadge);
-        }
-
-        if (lnk.country) {
-          const cBadge = document.createElement('span');
-          cBadge.style.display = 'inline-flex';
-          cBadge.style.alignItems = 'center';
-          cBadge.style.gap = '3px';
-          cBadge.style.background = 'rgba(56, 189, 248, 0.08)';
-          cBadge.style.padding = '1px 6px';
-          cBadge.style.borderRadius = '3px';
-          cBadge.style.border = '1px solid rgba(56, 189, 248, 0.2)';
-          cBadge.innerHTML = `<span style="opacity:0.75;">📍</span> <span style="color:#7dd3fc;">${lnk.country}</span>`;
-          metaLine.appendChild(cBadge);
-        }
-
-        tdUrl.appendChild(metaLine);
-      }
       tr.appendChild(tdUrl);
 
-      // 3. Category / Action
+      // 3. Business / Target (Strict single line with monospace & ellipsis, like backup codes)
+      const tdBusiness = document.createElement('td');
+      const bVal = lnk.businessName ? (lnk.businessName + (lnk.country ? ` • ${lnk.country}` : '')) : (lnk.country || '');
+      tdBusiness.innerHTML = `<span class="sheet-cell-mono ${bVal ? 'has-codes' : ''}" title="${escapeHtml(bVal || '—')}">${escapeHtml(bVal || '—')}</span>`;
+      tr.appendChild(tdBusiness);
+
+      // 4. Category / Action
       const tdCat = document.createElement('td');
       const catTag = document.createElement('span');
       const m = (lnk.mode || 'standard').toLowerCase();
@@ -2769,8 +2704,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const wrap = document.createElement('div');
         wrap.style.display = 'flex';
         wrap.style.gap = '4px';
-        wrap.style.flexWrap = 'wrap';
+        wrap.style.flexWrap = 'nowrap';
+        wrap.style.overflow = 'hidden';
         wrap.style.alignItems = 'center';
+        wrap.title = r;
         const parts = r.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
         for (const p of parts) {
           const badge = document.createElement('span');
@@ -2779,6 +2716,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             : 'sheet-tag tag-blue';
           badge.style.fontSize = '10.5px';
           badge.style.padding = '1px 5px';
+          badge.style.whiteSpace = 'nowrap';
+          badge.style.flexShrink = '0';
           badge.textContent = labels[p] || p;
           wrap.appendChild(badge);
         }
@@ -2910,11 +2849,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const currentProvider = (selectAiProvider?.value || appConfig.aiProvider || 'gemini').toUpperCase();
         const currentModel = selectAiModel?.value || appConfig.aiModel || 'default';
 
-        appendLogToBothTerminals('\n' + '═'.repeat(60));
+        appendLogToBothTerminals('\n' + '-'.repeat(55));
         appendLogToBothTerminals(`🤖 [AI Review Inspector]: Starting intelligent analysis...`);
         appendLogToBothTerminals(`🌐 Target URL: ${lnk.url}`);
         appendLogToBothTerminals(`⚙️ Engine: ${currentProvider} | Model: ${currentModel}`);
-        appendLogToBothTerminals(`⏳ Launching headless browser to fetch live review content...`);
+        appendLogToBothTerminals(`⏳ Launching browser to fetch live review content...`);
 
         showToast(reporterToast, '🤖 AI inspecting review link... (~5-8s)');
 
@@ -2946,18 +2885,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             appendLogToBothTerminals(`🎯 AI Selected Categories: [${res.categories.join(', ')}]`);
             appendLogToBothTerminals(`💡 AI Policy Reasoning: ${res.reasoning || 'Evaluated against Google Maps content guidelines'}`);
             appendLogToBothTerminals(`💾 Saved multi-category rotation rule to database successfully!`);
-            appendLogToBothTerminals('═'.repeat(60) + '\n');
-
+            appendLogToBothTerminals('-'.repeat(55) + '\n');
             showToast(reporterToast, `✨ AI Pre-Selected: [${res.categories.join(', ')}]`);
           } else {
             const errMsg = res?.message || 'Failed to inspect link with AI';
             appendLogToBothTerminals(`❌ [AI Inspection Failed]: ${errMsg}`, true);
-            appendLogToBothTerminals('═'.repeat(60) + '\n');
+            appendLogToBothTerminals('-'.repeat(55) + '\n');
             showToast(reporterToast, `❌ ${errMsg}`, false);
           }
         } catch (err) {
           appendLogToBothTerminals(`❌ [AI Inspection Error]: ${err.message}`, true);
-          appendLogToBothTerminals('═'.repeat(60) + '\n');
+          appendLogToBothTerminals('-'.repeat(55) + '\n');
           showToast(reporterToast, `❌ AI Error: ${err.message}`, false);
         } finally {
           btnAi.disabled = false;
@@ -3485,6 +3423,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window.desktopAPI.onScreenshot((data) => {
       latestProofBase64 = data.base64;
+      if (terminalInstance) {
+        terminalInstance.setLatestProof(data.base64, data.timestamp);
+      }
       if (dashProofStatus) {
         dashProofStatus.textContent = `Captured at ${data.timestamp} (Click to view)`;
       }
@@ -3552,9 +3493,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Initialize License Manager from about.js component
+  // Initialize Modular Components (License, AI)
   if (!window.licenseManager && window.LicenseManager) {
     window.licenseManager = new window.LicenseManager();
+  }
+  if (!window.aiComponent && window.AIComponent) {
+    window.aiComponent = new window.AIComponent();
+  }
+  if (!window.captchaComponent && window.CaptchaComponent) {
+    window.captchaComponent = new window.CaptchaComponent();
   }
 
   // Instant Zero-Latency Initial Render (hydrated from local storage caches in 0ms)

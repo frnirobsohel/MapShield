@@ -23,10 +23,13 @@ const {
   humanScroll,
   humanWanderMouse,
   applyDeepStealth,
+  attachDialogAutoHandler,
   smartClick: domSmartClick,
   parseProxy,
   UserAgentManager,
-  captureErrorScreenshot
+  captureErrorScreenshot,
+  isNetworkError,
+  isPageOffline
 } = require('./modules');
 
 let browserInstance = null;
@@ -39,6 +42,10 @@ let activeUserAgentProfile = null;
  * Terminal input prompt helper
  */
 function promptUser(query) {
+  if (!process.stdin.isTTY && typeof process.send === 'function') {
+    console.warn('⚠️ Non-interactive terminal: promptUser skipped.');
+    return Promise.resolve('');
+  }
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -57,11 +64,8 @@ async function syncActiveTab() {
   const allPages = await browserInstance.pages().catch(() => []);
   if (allPages.length <= 1) return;
 
-  // Find relevant account or mail tab
-  let targetPage = allPages.find(p => p.url().includes('accounts.google.com') || p.url().includes('mail.google.com'));
-  if (!targetPage) {
-    targetPage = allPages[allPages.length - 1];
-  }
+  // Target newly created tab or popup (last in list)
+  let targetPage = allPages[allPages.length - 1];
 
   if (targetPage && targetPage !== currentTab) {
     console.log('🔄 New tab detected! Switching active tab...');
@@ -83,6 +87,7 @@ async function syncActiveTab() {
       await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
     }
     await currentTab.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => {});
+    attachDialogAutoHandler(currentTab);
     await applyDeepStealth(currentTab);
     currentCursor = createCursor(currentTab);
     console.log('✅ Current active page: ' + currentTab.url());
@@ -110,6 +115,7 @@ async function runAgentCore(options = {}) {
   let browserPath = options.browserPath;
   let proxyServer = options.proxyServer;
   let headless = options.headless;
+  let captchaApiKey = options.captchaApiKey;
   const isLast = options.isLast !== undefined ? options.isLast : true;
 
   // AI Options resolution
@@ -128,7 +134,7 @@ async function runAgentCore(options = {}) {
   }
 
   // Fallback to SQLite Database if values not provided in options
-  if (!email || !reviewUrl || !reportReason || !browserPath || !aiOptions.aiApiKey) {
+  if (!email || !reviewUrl || !reportReason || !browserPath || !aiOptions.aiApiKey || !captchaApiKey) {
     try {
       const { getDatabase } = require('./database/db');
       const db = getDatabase();
@@ -136,7 +142,7 @@ async function runAgentCore(options = {}) {
       const accounts = db.getAccounts();
       const links = db.getLinks();
 
-      if (!email && accounts.length > 0) {
+      if (!email && !options.sessionOnly && options.email !== false && accounts.length > 0) {
         email = accounts[0].email;
         password = password || accounts[0].password;
         twoFactor = twoFactor || accounts[0].twoFactor || accounts[0]['2fa'];
@@ -149,6 +155,7 @@ async function runAgentCore(options = {}) {
       if (!reportType) reportType = settings.reportType || 'standard';
       if (!browserPath) browserPath = settings.browserPath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
       if (headless === undefined) headless = settings.headless || false;
+      if (!captchaApiKey && settings.captchaApiKey) captchaApiKey = settings.captchaApiKey;
 
       if (!aiOptions.aiApiKey && settings.aiApiKey) {
         aiOptions = {
@@ -180,6 +187,10 @@ async function runAgentCore(options = {}) {
         return selected;
       }
     }
+    if (!process.stdin.isTTY && typeof process.send === 'function') {
+      console.warn('⚠️ No 2FA backup codes remaining and environment is non-interactive.');
+      return null;
+    }
     return await promptUser('\n👉 Enter Google 2FA 8-digit Backup Code: ');
   }
 
@@ -203,7 +214,9 @@ async function runAgentCore(options = {}) {
   }
 
   // Per-Account Isolated User Data Directory
-  const sessionsBaseDir = path.join(__dirname, 'chrome_sessions');
+  const sessionsBaseDir = process.env.MAPSSHIELD_USER_DATA
+    ? path.join(process.env.MAPSSHIELD_USER_DATA, 'chrome_sessions')
+    : path.join(__dirname, 'chrome_sessions');
   if (!fs.existsSync(sessionsBaseDir)) {
     try { fs.mkdirSync(sessionsBaseDir, { recursive: true }); } catch (e) {}
   }
@@ -216,7 +229,9 @@ async function runAgentCore(options = {}) {
     try { fs.mkdirSync(sessionPath, { recursive: true }); } catch (e) {}
   }
 
-  const tempCacheDir = path.join(os.tmpdir(), 'mapsshield_cache', `cache_${safeEmail}`);
+  const tempCacheDir = process.env.MAPSSHIELD_USER_DATA
+    ? path.join(process.env.MAPSSHIELD_USER_DATA, 'cache', `cache_${safeEmail}`)
+    : path.join(os.tmpdir(), 'mapsshield_cache', `cache_${safeEmail}`);
   if (!fs.existsSync(tempCacheDir)) {
     try { fs.mkdirSync(tempCacheDir, { recursive: true }); } catch (e) {}
   }
@@ -244,6 +259,15 @@ async function runAgentCore(options = {}) {
   const uaManager = new UserAgentManager();
   const startupUa = options.userAgent || uaManager.get_next_user_agent({ os: 'windows', random: true });
 
+  // Dynamic 2Captcha Extension Injection
+  const captchaExtPath = path.resolve(__dirname, 'extensions/2captcha-solver');
+  const extensionArgs = [];
+  if (fs.existsSync(captchaExtPath) && options.loadCaptchaExtension !== false) {
+    extensionArgs.push(`--disable-extensions-except=${captchaExtPath}`);
+    extensionArgs.push(`--load-extension=${captchaExtPath}`);
+    console.log(`🧩 [Agent]: Auto-loaded 2Captcha extension from ${captchaExtPath}`);
+  }
+
   browserInstance = await puppeteer.launch({
     executablePath: targetExecutable || browserPath,
     userDataDir: sessionPath,
@@ -253,6 +277,7 @@ async function runAgentCore(options = {}) {
     args: [
       '--start-maximized',
       '--lang=en-US,en',
+      ...extensionArgs,
       ...(cleanProxyServer ? [`--proxy-server=${cleanProxyServer}`] : []),
       `--user-agent=${startupUa}`,
       // WebRTC Leak Protection: Strictly disallow non-proxied UDP lookups
@@ -271,6 +296,9 @@ async function runAgentCore(options = {}) {
       '--disable-setuid-sandbox',
       '--disable-infobars',
       '--disable-blink-features=AutomationControlled',
+      '--disable-features=ChromeSigninBubble,SignInProfileCreationFlow',
+      '--no-service-autorun',
+      '--password-store=basic',
       '--log-level=3',
       '--disable-logging',
       '--silent-debugger-extension-api',
@@ -293,6 +321,7 @@ async function runAgentCore(options = {}) {
 
   const pages = await browserInstance.pages();
   currentTab = pages.length > 0 ? pages[0] : await browserInstance.newPage();
+  attachDialogAutoHandler(currentTab);
   currentCursor = createCursor(currentTab);
 
   if (activeProxyAuth && activeProxyAuth.username) {
@@ -305,6 +334,7 @@ async function runAgentCore(options = {}) {
   // Strictly apply synchronized UserAgent + ClientHints + Accept-Language
   await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
   await currentTab.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => {});
+  attachDialogAutoHandler(currentTab);
   await applyDeepStealth(currentTab);
 
   // Automatically switch tab, synchronize User-Agent & authenticate if Chrome opens a new tab
@@ -313,6 +343,7 @@ async function runAgentCore(options = {}) {
       if (target.type() === 'page') {
         const newPage = await target.page().catch(() => null);
         if (newPage) {
+          attachDialogAutoHandler(newPage);
           if (activeProxyAuth && activeProxyAuth.username) {
             await newPage.authenticate(activeProxyAuth).catch(() => {});
           }
@@ -332,10 +363,7 @@ async function runAgentCore(options = {}) {
     const hasCredentials = email && email !== 'your_email@gmail.com';
 
     if (hasCredentials) {
-      console.log('\n┌─────────────────────────────────────────────────────────┐');
-      console.log('│  🔐 Step 1: Google Account Verification & Login       │');
-      console.log('└─────────────────────────────────────────────────────────┘\n');
-      console.log(`👤 User: ${email}`);
+      console.log(`\n[Agent] Step 1: Account Login (${email})`);
       const isLoginSuccess = await ensureGoogleLoggedIn({
         currentTab,
         currentCursor,
@@ -350,9 +378,7 @@ async function runAgentCore(options = {}) {
         throw new Error('Google login could not be completed for account: ' + email);
       }
 
-      console.log('\n┌─────────────────────────────────────────────────────────┐');
-      console.log('│  📍 Step 2: Google Maps Review Page & Report Submit   │');
-      console.log('└─────────────────────────────────────────────────────────┘\n');
+      console.log('\n[Agent] Step 2: Submitting Review Report');
       const repResult = await runMapsReporter({
         page: currentTab,
         cursor: currentCursor,
@@ -364,16 +390,15 @@ async function runAgentCore(options = {}) {
         reportType,
         reportReason,
         aiOptions,
-        senderInfo: options.senderInfo
+        senderInfo: options.senderInfo,
+        captchaApiKey
       });
-      if (repResult === false) {
+      if (!repResult || repResult === false || repResult.success === false) {
         throw new Error('Google Maps report execution could not be verified');
       }
 
     } else {
-      console.log('\n┌─────────────────────────────────────────────────────────┐');
-      console.log('│  🌐 Reporting directly with saved session (Session Only)│');
-      console.log('└─────────────────────────────────────────────────────────┘\n');
+      console.log('\n[Agent] Reporting with active session');
       const repResult = await runMapsReporter({
         page: currentTab,
         cursor: currentCursor,
@@ -385,31 +410,42 @@ async function runAgentCore(options = {}) {
         reportType,
         reportReason,
         aiOptions,
-        senderInfo: options.senderInfo
+        senderInfo: options.senderInfo,
+        captchaApiKey
       });
-      if (repResult === false) {
+      if (!repResult || repResult === false || repResult.success === false) {
         throw new Error('Google Maps report execution could not be verified');
       }
     }
 
     console.log('\nTask completed successfully for: ' + reviewUrl);
-    if (isLast) {
-      console.log('Closing browser in 5 seconds...');
-      await sleep(5000);
-    }
+    console.log('Holding browser open for confirmation before exiting...');
+    await sleep(5000);
 
   } catch (error) {
-    console.error('\n❌ An error occurred:', error.message);
+    let finalError = error;
+    if (currentTab) {
+      const pageOffline = await isPageOffline(currentTab).catch(() => false);
+      if (pageOffline && !isNetworkError(finalError)) {
+        finalError = new Error(`net::ERR_INTERNET_DISCONNECTED (DNS_PROBE_FINISHED_NO_INTERNET): ${error.message}`);
+      }
+    }
+    console.error('\n❌ An error occurred:', finalError.message);
     console.log('Saving diagnostic screenshot to report_logs/errors/...');
     if (currentTab) {
       await captureErrorScreenshot(currentTab, 'agent_error').catch(() => {});
     }
-    throw error;
+    throw finalError;
   } finally {
     if (browserInstance) {
       await browserInstance.close().catch(() => {});
       console.log('👋 Browser closed.');
     }
+    browserInstance = null;
+    currentTab = null;
+    currentCursor = null;
+    activeProxyAuth = null;
+    activeUserAgentProfile = null;
   }
 }
 
@@ -449,6 +485,10 @@ async function forceCloseBrowser() {
     }
     browserInstance = null;
   }
+  currentTab = null;
+  currentCursor = null;
+  activeProxyAuth = null;
+  activeUserAgentProfile = null;
 }
 
 module.exports = {

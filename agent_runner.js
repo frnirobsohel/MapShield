@@ -11,60 +11,8 @@ process.__experimentalWarningPatched = true;
 const fs = require('fs');
 const path = require('path');
 const { getDatabase } = require('./database/db');
-
-// Read payload passed from Electron
-const payloadRaw = process.env.AGENT_PAYLOAD;
-delete process.env.AGENT_PAYLOAD; // Wipe immediately from environment memory
-let payload = {};
-try {
-  if (payloadRaw) payload = JSON.parse(payloadRaw);
-} catch (e) {
-  console.error('Failed to parse AGENT_PAYLOAD:', e.message);
-}
-
-// Override environment variables with user-configured values from UI
-if (payload.email) process.env.GOOGLE_EMAIL = payload.email;
-if (payload.password) process.env.GOOGLE_PASSWORD = payload.password;
-if (payload.twoFactor || payload['2fa']) process.env.GOOGLE_2FA_SECRET = payload.twoFactor || payload['2fa'];
-if (payload.backupCode) process.env.GOOGLE_BACKUP_CODE = payload.backupCode;
-if (payload.reportReason) process.env.MAPS_REPORT_REASON = payload.reportReason;
-if (payload.reportType) process.env.MAPS_REPORT_TYPE = payload.reportType;
-if (payload.browserPath) process.env.BROWSER_PATH = payload.browserPath;
-if (payload.headless !== undefined) process.env.HEADLESS = payload.headless ? 'true' : 'false';
-if (payload.aiApiKey) process.env.AI_API_KEY = payload.aiApiKey;
-if (payload.aiProvider) process.env.AI_PROVIDER = payload.aiProvider;
-if (payload.aiModel) process.env.AI_MODEL = payload.aiModel;
-if (payload.aiInspection !== undefined) process.env.AI_INSPECTION = payload.aiInspection ? 'true' : 'false';
-
-// AI configuration resolution
-let aiConfig = {
-  aiProvider: payload.aiProvider,
-  aiApiKey: payload.aiApiKey,
-  aiModel: payload.aiModel,
-  aiInspection: payload.aiInspection
-};
-
-if (!aiConfig.aiApiKey) {
-  try {
-    const db = getDatabase();
-    const settings = db.getSettings();
-    if (settings.aiApiKey) {
-      aiConfig = {
-        aiProvider: aiConfig.aiProvider || settings.aiProvider || 'gemini',
-        aiApiKey: settings.aiApiKey,
-        aiModel: aiConfig.aiModel || settings.aiModel || 'gemini-2.0-flash',
-        aiInspection: aiConfig.aiInspection !== undefined ? aiConfig.aiInspection : (settings.aiInspection || false)
-      };
-    }
-  } catch (e) {
-    console.warn('⚠️ Settings fallback notice:', e.message);
-  }
-}
-
-// Browser selection pool (for randomized browser rotation across jobs)
-const browserPool = Array.isArray(payload.selectedBrowsers) && payload.selectedBrowsers.length > 0
-  ? payload.selectedBrowsers
-  : (payload.browserPath ? [payload.browserPath] : []);
+const { isNetworkError } = require('./modules/network');
+const { PROOFS_DIR, ERRORS_DIR } = require('./modules/helpers/screenshot_paths');
 
 // Helper to notify Electron parent process
 function notifyParent(type, data) {
@@ -73,65 +21,43 @@ function notifyParent(type, data) {
   }
 }
 
-// Parse target URLs (one or multiple, objects or strings)
-let rawTargetList = [];
-if (Array.isArray(payload.urls) && payload.urls.length > 0) {
-  rawTargetList = payload.urls;
-} else if (payload.url) {
-  rawTargetList = [payload.url];
-} else {
-  try {
-    const db = getDatabase();
-    const links = db.getLinks();
-    if (Array.isArray(links) && links.length > 0) {
-      rawTargetList = links;
+/**
+ * Retrieves execution payload safely via native IPC or fallback environment
+ */
+function getPayload() {
+  return new Promise((resolve) => {
+    // 1. If passed via env (legacy / CLI fallback)
+    if (process.env.AGENT_PAYLOAD) {
+      try {
+        const parsed = JSON.parse(process.env.AGENT_PAYLOAD);
+        delete process.env.AGENT_PAYLOAD;
+        return resolve(parsed);
+      } catch (e) {
+        delete process.env.AGENT_PAYLOAD;
+      }
     }
-  } catch (e) {}
+
+    // 2. If running under Electron fork with IPC, wait for 'init_payload' message
+    if (process.send) {
+      const handler = (msg) => {
+        if (msg && msg.type === 'init_payload') {
+          process.removeListener('message', handler);
+          resolve(msg.payload || {});
+        }
+      };
+      process.on('message', handler);
+      setTimeout(() => {
+        process.removeListener('message', handler);
+        resolve({});
+      }, 3500);
+      return;
+    }
+
+    resolve({});
+  });
 }
-
-if (rawTargetList.length === 0) {
-  rawTargetList = ['https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7'];
-}
-
-// Normalize each target to a clean object { url, mode, reason, targetCount, doneCount, businessName, country }
-const targetUrls = rawTargetList.map(item => {
-  if (typeof item === 'object' && item !== null) {
-    const rawUrl = (item.url || '').trim();
-    if (!rawUrl) return null;
-    return {
-      url: rawUrl,
-      mode: item.mode || payload.reportType || 'standard',
-      reason: item.reason || payload.reportReason || 'spam',
-      targetCount: Math.max(1, parseInt(item.targetCount, 10) || 1),
-      doneCount: Math.max(0, parseInt(item.doneCount, 10) || 0),
-      businessName: (item.businessName || '').trim(),
-      country: (item.country || '').trim()
-    };
-  } else if (typeof item === 'string') {
-    const rawUrl = item.trim();
-    if (!rawUrl) return null;
-    return {
-      url: rawUrl,
-      mode: payload.reportType || 'standard',
-      reason: payload.reportReason || 'spam',
-      targetCount: 1,
-      doneCount: 0,
-      businessName: '',
-      country: ''
-    };
-  }
-  return null;
-}).filter(Boolean);
-
-console.log('🚀 Agent Runner Initialized');
-console.log(`🌐 Target Browser: ${payload.browserPath || 'Google Chrome (Default)'}`);
-console.log(`⚖️ Report Mode: ${payload.reportType === 'legal' ? 'Report a Legal Notice' : 'Standard Policy Report (' + (payload.reportReason || 'spam') + ')'}`);
-console.log(`📋 Target Queue: ${targetUrls.length} Review URL(s) to process\n`);
 
 // Watch for screenshot generation (both success proof in report_logs/proofs and error diagnostics in report_logs/errors)
-const PROOFS_DIR = path.join(__dirname, 'report_logs', 'proofs');
-const ERRORS_DIR = path.join(__dirname, 'report_logs', 'errors');
-
 try {
   fs.mkdirSync(PROOFS_DIR, { recursive: true });
   fs.mkdirSync(ERRORS_DIR, { recursive: true });
@@ -176,21 +102,24 @@ function checkAndNotifyScreenshot(fullPath, filename, category = 'proof') {
   try {
     if (!fs.existsSync(fullPath)) return;
     const stat = fs.statSync(fullPath);
-    if (!stat.size || stat.size === 0) return; // Wait for write to finish
+    if (!stat.size || stat.size < 512) return; // Wait for write to finish
     const lastMtime = watchedScreenshotMtimes.get(fullPath) || 0;
     if (stat.mtimeMs > lastMtime) {
       watchedScreenshotMtimes.set(fullPath, stat.mtimeMs);
-      // Use async file read to avoid blocking the event loop for large screenshots
-      fs.promises.readFile(fullPath).then(buffer => {
-        const b64 = buffer.toString('base64');
-        notifyParent('screenshot', {
-          category, // 'proof' or 'error'
-          folder: category === 'proof' ? 'report_logs/proofs' : 'report_logs/errors',
-          filename,
-          base64: 'data:image/png;base64,' + b64,
-          timestamp: new Date().toLocaleTimeString()
-        });
-      }).catch(() => {});
+      // Small delay to ensure disk write stream is completely flushed by browser
+      setTimeout(() => {
+        fs.promises.readFile(fullPath).then(buffer => {
+          if (!buffer || buffer.length < 512) return;
+          const b64 = buffer.toString('base64');
+          notifyParent('screenshot', {
+            category, // 'proof' or 'error'
+            folder: category === 'proof' ? 'report_logs/proofs' : 'report_logs/errors',
+            filename,
+            base64: 'data:image/png;base64,' + b64,
+            timestamp: new Date().toLocaleTimeString()
+          });
+        }).catch(() => {});
+      }, 200);
     }
   } catch (_) {}
 }
@@ -264,6 +193,103 @@ process.on('SIGINT', async () => {
 
 async function executeQueue() {
   const { runAgentCore } = require('./agent');
+
+  const payload = await getPayload();
+
+  // Non-sensitive runtime settings
+  if (payload.reportReason) process.env.MAPS_REPORT_REASON = payload.reportReason;
+  if (payload.reportType) process.env.MAPS_REPORT_TYPE = payload.reportType;
+  if (payload.browserPath) process.env.BROWSER_PATH = payload.browserPath;
+  if (payload.headless !== undefined) process.env.HEADLESS = payload.headless ? 'true' : 'false';
+  if (payload.aiApiKey) process.env.AI_API_KEY = payload.aiApiKey;
+  if (payload.aiProvider) process.env.AI_PROVIDER = payload.aiProvider;
+  if (payload.aiModel) process.env.AI_MODEL = payload.aiModel;
+  if (payload.aiInspection !== undefined) process.env.AI_INSPECTION = payload.aiInspection ? 'true' : 'false';
+
+  // AI configuration resolution
+  let aiConfig = {
+    aiProvider: payload.aiProvider,
+    aiApiKey: payload.aiApiKey,
+    aiModel: payload.aiModel,
+    aiInspection: payload.aiInspection
+  };
+
+  if (!aiConfig.aiApiKey) {
+    try {
+      const db = getDatabase();
+      const settings = db.getSettings();
+      if (settings.aiApiKey) {
+        aiConfig = {
+          aiProvider: aiConfig.aiProvider || settings.aiProvider || 'gemini',
+          aiApiKey: settings.aiApiKey,
+          aiModel: aiConfig.aiModel || settings.aiModel || 'gemini-2.0-flash',
+          aiInspection: aiConfig.aiInspection !== undefined ? aiConfig.aiInspection : (settings.aiInspection || false)
+        };
+      }
+    } catch (e) {
+      console.warn('⚠️ Settings fallback notice:', e.message);
+    }
+  }
+
+  // Browser selection pool (for randomized browser rotation across jobs)
+  const browserPool = Array.isArray(payload.selectedBrowsers) && payload.selectedBrowsers.length > 0
+    ? payload.selectedBrowsers
+    : (payload.browserPath ? [payload.browserPath] : []);
+
+  // Parse target URLs (one or multiple, objects or strings)
+  let rawTargetList = [];
+  if (Array.isArray(payload.urls) && payload.urls.length > 0) {
+    rawTargetList = payload.urls;
+  } else if (payload.url) {
+    rawTargetList = [payload.url];
+  } else {
+    try {
+      const db = getDatabase();
+      const links = db.getLinks();
+      if (Array.isArray(links) && links.length > 0) {
+        rawTargetList = links;
+      }
+    } catch (e) {}
+  }
+
+  if (rawTargetList.length === 0) {
+    rawTargetList = ['https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7'];
+  }
+
+  // Normalize each target to a clean object
+  const targetUrls = rawTargetList.map(item => {
+    if (typeof item === 'object' && item !== null) {
+      const rawUrl = (item.url || '').trim();
+      if (!rawUrl) return null;
+      return {
+        url: rawUrl,
+        mode: item.mode || payload.reportType || 'standard',
+        reason: item.reason || payload.reportReason || 'spam',
+        targetCount: Math.max(1, parseInt(item.targetCount, 10) || 1),
+        doneCount: Math.max(0, parseInt(item.doneCount, 10) || 0),
+        businessName: (item.businessName || '').trim(),
+        country: (item.country || '').trim()
+      };
+    } else if (typeof item === 'string') {
+      const rawUrl = item.trim();
+      if (!rawUrl) return null;
+      return {
+        url: rawUrl,
+        mode: payload.reportType || 'standard',
+        reason: payload.reportReason || 'spam',
+        targetCount: 1,
+        doneCount: 0,
+        businessName: '',
+        country: ''
+      };
+    }
+    return null;
+  }).filter(Boolean);
+
+  console.log('🚀 Agent Runner Initialized');
+  console.log(`🌐 Target Browser: ${payload.browserPath || 'Google Chrome (Default)'}`);
+  console.log(`⚖️ Report Mode: ${payload.reportType === 'legal' ? 'Report a Legal Notice' : 'Standard Policy Report (' + (payload.reportReason || 'spam') + ')'}`);
+  console.log(`📋 Target Queue: ${targetUrls.length} Review URL(s) to process\n`);
 
   let accounts = Array.isArray(payload.accounts) && payload.accounts.length > 0 ? payload.accounts : [];
   if (accounts.length === 0) {
@@ -419,6 +445,9 @@ async function executeQueue() {
 
   console.log(`📋 Resolved Task Queue: ${jobs.length} Job(s) scheduled across ${targetUrls.length} target URL(s).\n`);
 
+  let wasAbortedByNetwork = false;
+  let processedCount = 0;
+
   for (let i = 0; i < jobs.length; i++) {
     const currentJob = jobs[i];
     const currentUrl = currentJob.url;
@@ -466,7 +495,7 @@ async function executeQueue() {
       }
     }
 
-    console.log(`\n=======================================================`);
+    console.log(`\n-------------------------------------------------------`);
     console.log(`🎯 [Job ${i + 1}/${jobs.length}] URL: ${currentUrl} (Report #${currentJob.reportNum} of ${currentJob.targetCount})`);
     if (currentAccount) {
       console.log(`👤 Using Account: ${currentAccount.email}`);
@@ -477,7 +506,7 @@ async function executeQueue() {
     if (currentBrowserPath) {
       console.log(`🚀 Using Browser: ${currentBrowserPath}`);
     }
-    console.log(`=======================================================\n`);
+    console.log(`-------------------------------------------------------\n`);
 
     try {
       const dbSettings = (() => {
@@ -503,6 +532,7 @@ async function executeQueue() {
         headless: payload.headless === true,
         aiOptions: aiConfig,
         senderInfo,
+        captchaApiKey: payload.captchaApiKey || dbSettings.captchaApiKey || undefined,
         isLast: i === jobs.length - 1
       });
       console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
@@ -542,8 +572,73 @@ async function executeQueue() {
         error: null,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
+      processedCount = i + 1;
     } catch (err) {
       console.error(`\n❌ [Job ${i + 1}/${jobs.length}] Error:`, err.message);
+
+      const isNetwork = isNetworkError(err);
+
+      if (isNetwork) {
+        wasAbortedByNetwork = true;
+        processedCount = i;
+
+        console.error('\n' + '='.repeat(68));
+        console.error('🛑 [NETWORK DISCONNECTED] Internet connection or DNS lost!');
+        console.error(`⚠️ Detected Network Error: ${err.message}`);
+        console.error('🛡️ [ACCOUNT SAFETY ACTIVATED]');
+        console.error('🛡️ Preserving account without marking as used or failed.');
+        console.error('🛑 Halting review queue immediately to prevent burning accounts.');
+        console.error('='.repeat(68) + '\n');
+
+        // Record Network Failure Audit Entry to SQLite
+        try {
+          const db = getDatabase();
+          db.recordAuditLog({
+            url: currentUrl,
+            email: currentAccount ? currentAccount.email : null,
+            proxy: currentProxy || null,
+            status: 'network_error',
+            reason: currentJob.reason || payload.reportReason || 'spam',
+            mode: currentJob.mode || payload.reportType || 'standard',
+            error: err.message || 'Network disconnected',
+            screenshot: 'report_logs/errors/latest_error.png',
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn('[SQLite Audit] Notice:', e.message);
+        }
+
+        // Account is preserved: NOT marked as used! Status preserved as 'ready'
+        if (currentAccount && currentAccount.email) {
+          notifyParent('account_update', {
+            email: currentAccount.email,
+            status: 'ready',
+            used: false,
+            error: 'Network disconnected: ' + err.message,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+        }
+
+        notifyParent('link_update', {
+          url: currentUrl,
+          status: 'paused',
+          error: 'Network disconnected: ' + err.message,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
+        notifyParent('status', {
+          text: `⚠️ Execution paused: Internet connection lost (${err.message})`,
+          progress: Math.round(((i) / jobs.length) * 100),
+          current: i,
+          total: jobs.length,
+          networkError: true
+        });
+
+        // Break loop to completely stop runner from burning subsequent accounts
+        break;
+      }
+
+      processedCount = i + 1;
 
       // Record Failed Audit Entry to SQLite
       try {
@@ -567,11 +662,29 @@ async function executeQueue() {
         notifyParent('account_update', {
           email: currentAccount.email,
           status: 'failed',
-          used: true,
+          used: false, // Strict Quota Preservation: Task was incomplete/failed, do NOT mark as used!
           error: err.message || 'Login or reporting failed',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
+        console.log(`🛡️ [ACCOUNT PRESERVED] Account "${currentAccount.email}" was NOT burned (preserved as unused with used: 0).`);
       }
+
+      // If a proxy was in use during this failed job, record proxy diagnostic status
+      if (currentProxy) {
+        try {
+          const db = getDatabase();
+          if (typeof db.updateProxyStatus === 'function') {
+            db.updateProxyStatus(currentProxy, {
+              status: 'error',
+              error: err.message || 'Task failed while using proxy',
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (pe) {
+          console.warn('[Proxy Tracking] Notice:', pe.message);
+        }
+      }
+
       notifyParent('link_update', {
         url: currentUrl,
         status: 'failed',
@@ -588,16 +701,24 @@ async function executeQueue() {
     }
   }
 
-  notifyParent('status', {
-    text: 'All reviews in queue processed!',
-    progress: 100,
-    current: jobs.length,
-    total: jobs.length
-  });
-
-  clearInterval(screenshotWatcher);
-  flushScreenshots();
-  console.log('\n🏁 Queue execution finished.');
+  if (wasAbortedByNetwork) {
+    notifyParent('status', {
+      text: 'Execution halted: Internet connection lost. Remaining accounts preserved.',
+      progress: Math.round((processedCount / jobs.length) * 100),
+      current: processedCount,
+      total: jobs.length,
+      networkError: true
+    });
+    console.log('\n🛑 Execution stopped due to network disconnection.');
+  } else {
+    notifyParent('status', {
+      text: 'All reviews in queue processed!',
+      progress: 100,
+      current: jobs.length,
+      total: jobs.length
+    });
+    console.log('\n🏁 Queue execution finished.');
+  }
   process.exit(0);
 }
 

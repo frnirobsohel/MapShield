@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   sleep: defaultSleep,
   gaussianRandom,
@@ -17,64 +18,262 @@ const {
   smartClick: defaultSmartClick,
   clickElementByText,
   captureProofScreenshot,
-  humanType
+  humanType,
+  waitForActionableElement,
+  detectPageAnomaly,
+  waitForPageOrTabTransition,
+  waitForTroubleshooterQuestion
 } = require('../helpers');
 
 const TROUBLESHOOTER_URL = 'https://support.google.com/legal/troubleshooter/1114905';
 
-// 5-Step Troubleshooter Question & Option Mappings
-const TROUBLESHOOTER_STEPS = [
-  {
+// Comprehensive Troubleshooter Options & Adaptive Path Configurations
+const TROUBLESHOOTER_OPTIONS = {
+  step1: {
     step: 1,
     name: 'Product Selection',
     inputName: '1620659',
-    inputValue: '9723198', // Google Maps, Waze and related products
+    inputValue: '9723198',
+    textPattern: 'Google Maps, Waze and related products|Google Maps',
     labelDescription: 'Google Maps, Waze and related products'
   },
-  {
+  step2: {
     step: 2,
     name: 'AI Generated Content Check',
     inputName: '14440196',
-    inputValue: '14438492', // No
+    inputValue: '14438492',
+    textPattern: '^\\s*No\\s*$',
     labelDescription: 'No'
   },
-  {
+  step2AIYes: {
+    step: 2,
+    name: 'AI Generated Content Check (Yes)',
+    inputName: '14440196',
+    inputValue: '14438288',
+    textPattern: '^\\s*Yes\\s*$',
+    labelDescription: 'Yes (AI Generated Content Check)'
+  },
+  step3Maps: {
     step: 3,
-    name: 'Specific Maps Product',
+    name: 'Specific Maps Product (Primary)',
     inputName: '9722894',
-    inputValue: '1115689', // Maps
+    inputValue: '1115689',
+    textPattern: '^\\s*Maps\\s*$',
     labelDescription: 'Maps'
   },
-  {
+  step3LocalListings: {
+    step: 3,
+    name: 'Specific Maps Product (Local Listings Fallback)',
+    inputName: '9722894',
+    textPattern: 'Local listings.*business listings|Local listings',
+    labelDescription: 'Local listings (including business listings), photos, or saved items'
+  },
+  step3LegalReasonsAI: {
+    step: 3,
+    name: 'Legal vs Policy Reason (AI Branch)',
+    inputName: '14768775',
+    inputValue: '16943707',
+    textPattern: 'Legal Reasons to Report Content',
+    labelDescription: 'Legal Reasons to Report Content'
+  },
+  step4: {
     step: 4,
     name: 'Legal vs Policy Reason',
     inputName: '13011237',
-    inputValue: '13010990', // Legal Reasons to Report Content
+    inputValue: '13010990',
+    textPattern: 'Legal Reasons to Report Content',
     labelDescription: 'Legal Reasons to Report Content'
   },
-  {
+  step4DefamationAI: {
+    step: 4,
+    name: 'Legal Grounds - Defamation (AI Branch)',
+    inputName: '16943637',
+    inputValue: '16944292',
+    textPattern: 'Defamation: Report content that defames|Defamation',
+    labelDescription: 'Defamation: Report content that defames you or your business/organization'
+  },
+  step5Defamation: {
     step: 5,
-    name: 'Legal Grounds',
+    name: 'Legal Grounds - Defamation (Primary)',
     inputName: '13011800',
-    inputValue: '15220331', // Defamation
+    inputValue: '15220331',
+    textPattern: 'Defamation: Report content that defames|Defamation',
     labelDescription: 'Defamation: Report content that defames you or your business'
+  },
+  step5Other: {
+    step: 5,
+    name: 'Legal Grounds - Other (Fallback)',
+    textPattern: 'Other: Report content for a legal reason not listed above|legal reason not listed above|Other',
+    labelDescription: 'Other: Report content for a legal reason not listed above (for example, content violating local anti-terrorism or hate speech laws)'
   }
+};
+
+// Backward compatible 5-Step Troubleshooter Mapping
+const TROUBLESHOOTER_STEPS = [
+  TROUBLESHOOTER_OPTIONS.step1,
+  TROUBLESHOOTER_OPTIONS.step2,
+  TROUBLESHOOTER_OPTIONS.step3Maps,
+  TROUBLESHOOTER_OPTIONS.step4,
+  TROUBLESHOOTER_OPTIONS.step5Defamation
 ];
 
+// Map tracking preferred troubleshooter path specifically per normalized review URL
+// key: normalized review link string -> value: 'ai_yes' | 'legacy'
+const reviewLinkTroubleshooterPreferences = new Map();
+
 /**
- * Formats a clean, proper capitalized human legal name from a string or email
+ * Normalizes a review URL by removing hash and non-essential query parameters
+ * @param {string} url
+ * @returns {string}
+ */
+function normalizeReviewUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/**
+ * Gets the preferred troubleshooter path for a specific review link
+ * @param {string} reviewUrl
+ * @returns {'ai_yes' | 'legacy' | null}
+ */
+function getReviewLinkPreferredPath(reviewUrl) {
+  const key = normalizeReviewUrl(reviewUrl);
+  if (!key) return null;
+  if (reviewLinkTroubleshooterPreferences.has(key)) {
+    return reviewLinkTroubleshooterPreferences.get(key);
+  }
+  try {
+    const { getDatabase } = require('../../database/db');
+    const db = getDatabase();
+    if (db && db.db) {
+      const hashedKey = `ts_pref_${crypto.createHash('md5').update(key).digest('hex')}`;
+      const row = db.db.prepare('SELECT value FROM app_settings WHERE key = ?').get(hashedKey);
+      if (row && row.value) {
+        reviewLinkTroubleshooterPreferences.set(key, row.value);
+        return row.value;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
+ * Sets the preferred troubleshooter path for a specific review link
+ * @param {string} reviewUrl
+ * @param {'ai_yes' | 'legacy'} pathKey
+ */
+function setReviewLinkPreferredPath(reviewUrl, pathKey) {
+  const key = normalizeReviewUrl(reviewUrl);
+  if (!key) return;
+  reviewLinkTroubleshooterPreferences.set(key, pathKey);
+  try {
+    const { getDatabase } = require('../../database/db');
+    const db = getDatabase();
+    if (db && db.db) {
+      const hashedKey = `ts_pref_${crypto.createHash('md5').update(key).digest('hex')}`;
+      db.db.prepare(`
+        INSERT INTO app_settings (key, value, updatedAt)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
+      `).run(hashedKey, pathKey, new Date().toISOString());
+    }
+  } catch (_) {}
+}
+
+/**
+ * Clears the link preferences registry (useful for testing)
+ */
+function clearReviewLinkPreferences() {
+  reviewLinkTroubleshooterPreferences.clear();
+}
+
+/**
+ * Deduplicates consecutive repeated words and multi-word phrase patterns
+ * e.g. ["Vishnu", "singh", "Vishnu", "singh"] -> ["Vishnu", "singh"]
+ * e.g. ["John", "John", "Doe"] -> ["John", "Doe"]
+ * e.g. ["Nirob", "Sohel", "Nirob", "Sohel"] -> ["Nirob", "Sohel"]
+ */
+function deduplicateWords(words) {
+  if (!words || words.length <= 1) return words;
+
+  // 1. Remove consecutive identical words (case-insensitive)
+  let deduped = [];
+  for (let i = 0; i < words.length; i++) {
+    if (i === 0 || words[i].toLowerCase() !== words[i - 1].toLowerCase()) {
+      deduped.push(words[i]);
+    }
+  }
+
+  // 2. Detect repeated phrase sequences (e.g. [A, B, A, B] -> [A, B], [A, B, C, A, B, C] -> [A, B, C])
+  for (let patLen = Math.floor(deduped.length / 2); patLen >= 1; patLen--) {
+    if (deduped.length % patLen === 0) {
+      let isAllRepeats = true;
+      const firstChunk = deduped.slice(0, patLen).map(w => w.toLowerCase()).join(' ');
+      for (let offset = patLen; offset < deduped.length; offset += patLen) {
+        const chunk = deduped.slice(offset, offset + patLen).map(w => w.toLowerCase()).join(' ');
+        if (chunk !== firstChunk) {
+          isAllRepeats = false;
+          break;
+        }
+      }
+      if (isAllRepeats) {
+        deduped = deduped.slice(0, patLen);
+        break;
+      }
+    }
+  }
+
+  return deduped;
+}
+
+/**
+ * Formats a clean, proper capitalized human legal name from a string, Google profile, or email.
+ * Resolves duplicated phrases, removes metadata annotations, splits compound usernames,
+ * and ensures flawless Title-Casing.
+ * e.g. "Vishnu singh Vishnu singh" -> "Vishnu Singh"
  * e.g. "vvishnusingh09@gmail.com" -> "Vishnu Singh"
  * e.g. "nirobsohel272@gmail.com" -> "Nirob Sohel"
+ * e.g. "John Doe John Doe" -> "John Doe"
  */
 function formatCleanHumanName(raw) {
-  if (!raw) return 'Google Business Representative';
+  if (!raw || typeof raw !== 'string') return 'Google Business Representative';
 
-  let str = raw.includes('@') ? raw.split('@')[0] : raw;
+  let str = raw.trim();
+  if (!str) return 'Google Business Representative';
+
+  // Strip email domain if present
+  if (str.includes('@')) {
+    str = str.split('@')[0];
+  }
+
+  // Remove URLs if any
+  str = str.replace(/https?:\/\/\S+/gi, '');
+  // Remove parenthesized notes (e.g. "(Owner)", "(verified)", "(Google Account)")
+  str = str.replace(/\([^)]*\)/g, ' ');
+  // Remove numbers
   str = str.replace(/[0-9]+/g, ' ').trim();
-  str = str.replace(/[._\-+]/g, ' ');
+  // Replace punctuation and separators with spaces
+  str = str.replace(/[._\-+/:\\|,]/g, ' ');
+  // Remove repeated leading single letter from usernames (e.g. vvishnusingh -> vishnusingh)
   str = str.replace(/^([a-z])\1(?=[a-z]{3,})/i, '$1');
 
   let words = str.split(/\s+/).filter(Boolean);
+
+  // If a single combined word has duplicate halves (e.g. "VishnuSinghVishnuSingh")
+  if (words.length === 1 && words[0].length >= 6) {
+    const w = words[0];
+    const half = Math.floor(w.length / 2);
+    if (w.length % 2 === 0 && w.slice(0, half).toLowerCase() === w.slice(half).toLowerCase()) {
+      words = [w.slice(0, half)];
+    }
+  }
+
+  // If single combined word, attempt to split common compound names/last names
   if (words.length === 1 && words[0].length >= 6) {
     const commonLastNames = ['singh', 'sohel', 'kumar', 'khan', 'sharma', 'smith', 'jones', 'brown', 'wilson', 'taylor', 'johnson', 'patel', 'ahmed', 'rahman', 'ali', 'hasan', 'hossain'];
     const lower = words[0].toLowerCase();
@@ -87,8 +286,15 @@ function formatCleanHumanName(raw) {
     }
   }
 
-  if (words.length === 0) return 'Google Business Representative';
+  // Deduplicate consecutive identical words and repeated phrase patterns
+  words = deduplicateWords(words);
 
+  if (words.length === 0) return 'Google Business Representative';
+  if (words.length === 1) {
+    words.push('Representative');
+  }
+
+  // Proper Title-casing for each name part
   return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
 
@@ -137,8 +343,9 @@ async function extractGoogleProfileName(page) {
     });
 
     if (extractedName) {
-      console.log(`👤 [Profile Detection]: Found name from avatar aria-label: "${extractedName}"`);
-      return extractedName;
+      const cleanName = formatCleanHumanName(extractedName);
+      console.log(`👤 [Profile Detection]: Found name from avatar aria-label: "${cleanName}"`);
+      return cleanName;
     }
 
     // Layer 2: Click the avatar button to open Profile Card Popup (as user suggested)
@@ -218,8 +425,9 @@ async function extractGoogleProfileName(page) {
       await page.evaluate(() => new Promise(r => setTimeout(r, 400)));
 
       if (extractedName) {
-        console.log(`👤 [Profile Detection]: Successfully extracted name from profile card popup: "${extractedName}"`);
-        return extractedName;
+        const cleanName = formatCleanHumanName(extractedName);
+        console.log(`👤 [Profile Detection]: Successfully extracted name from profile card popup: "${cleanName}"`);
+        return cleanName;
       }
     }
 
@@ -242,24 +450,340 @@ async function extractGoogleProfileName(page) {
 }
 
 /**
+ * Selects a Troubleshooter radio option by value or fuzzy text pattern with natural mouse movement & scroll
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {Object} criteria
+ * @param {string} [criteria.inputName]
+ * @param {string} [criteria.inputValue]
+ * @param {string} [criteria.textPattern]
+ * @param {string} criteria.labelDescription
+ * @param {Object} [options]
+ * @returns {Promise<boolean>}
+ */
+async function selectOptionByCriteria(page, criteria, options = {}) {
+  const sleep = options.sleep || defaultSleep;
+  const cursor = options.cursor;
+  const { inputName, inputValue, textPattern, labelDescription } = criteria;
+
+  console.log(`👀 Reading & selecting option for "${labelDescription}"...`);
+  await sleep(randomBetween(1200, 1800));
+
+  // 0. Check if target option is ALREADY selected and satisfied
+  const alreadySelected = await page.evaluate((name, val, pattern) => {
+    let input = null;
+    if (name && val) input = document.querySelector(`input[name="${name}"][value="${val}"]`);
+    if (!input && val) input = document.querySelector(`input[value="${val}"]`);
+    if (input) {
+      if (input.checked) return true;
+      const spanRadio = input.parentElement ? input.parentElement.querySelector('[role="radio"]') : null;
+      if (spanRadio && spanRadio.getAttribute('aria-checked') === 'true') return true;
+    }
+    const answeredQs = Array.from(document.querySelectorAll('.question.answered, .scSharedMaterialtroubleshooterFlowquestion.answered, [data-question-id].answered'));
+    for (const q of answeredQs) {
+      if (input && q.contains(input)) {
+        const choice = q.querySelector('.choice');
+        if (choice && (!val || q.querySelector(`input[value="${val}"]:checked`) || (pattern && new RegExp(pattern, 'i').test(choice.textContent || '')))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, inputName, inputValue, textPattern).catch(() => false);
+
+  if (alreadySelected) {
+    console.log(`   ✅ Option for "${labelDescription}" is already selected.`);
+    return true;
+  }
+
+  // 1. If the target question was previously answered with a DIFFERENT value, uncollapse it
+  await page.evaluate((name, val, pattern) => {
+    const reg = pattern ? new RegExp(pattern, 'i') : null;
+    const answeredQs = Array.from(document.querySelectorAll('.question.answered, .scSharedMaterialtroubleshooterFlowquestion.answered, [data-question-id].answered'));
+    for (const q of answeredQs) {
+      let isTarget = false;
+      if (name && q.querySelector(`input[name="${name}"]`)) isTarget = true;
+      if (!isTarget && val && q.querySelector(`input[value="${val}"]`)) isTarget = true;
+      if (!isTarget && reg) {
+        const text = (q.innerText || q.textContent || '').trim();
+        if (reg.test(text)) isTarget = true;
+      }
+
+      if (isTarget) {
+        const choice = q.querySelector('.choice') || q.querySelector('svg') || q;
+        choice.click();
+        q.classList.remove('answered');
+      }
+    }
+  }, inputName, inputValue, textPattern).catch(() => {});
+
+  // 2. Wait for option to appear in DOM (up to 15s)
+  let foundHandle = null;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    if (inputValue) {
+      const sel = inputName
+        ? `input[name="${inputName}"][value="${inputValue}"]`
+        : `input[value="${inputValue}"]`;
+      foundHandle = await page.$(sel).catch(() => null);
+    }
+
+    if (!foundHandle && textPattern) {
+      foundHandle = await page.evaluateHandle((pattern) => {
+        const reg = new RegExp(pattern, 'i');
+        const labels = Array.from(document.querySelectorAll('label, .scSharedMaterialtroubleshooterFlowquestion label, .question label'));
+        for (const l of labels) {
+          const t = (l.innerText || l.textContent || '').trim();
+          if (reg.test(t)) {
+            return l;
+          }
+        }
+        return null;
+      }, textPattern).catch(() => null);
+
+      if (foundHandle && (await foundHandle.asElement()) === null) {
+        foundHandle = null;
+      }
+    }
+
+    if (foundHandle) break;
+    await sleep(600);
+  }
+
+  // 3. Scroll into view and move cursor if available
+  if (foundHandle) {
+    await page.evaluate(el => {
+      const target = el.closest('label') || el.parentElement || el;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, foundHandle).catch(() => {});
+    await sleep(randomBetween(400, 700));
+
+    if (cursor && typeof cursor.moveTo === 'function') {
+      await cursor.moveTo(foundHandle).catch(() => {});
+      await sleep(randomBetween(200, 400));
+    }
+  }
+
+  // 4. Click and dispatch change events
+  const clicked = await page.evaluate((name, val, pattern) => {
+    let input = null;
+    let label = null;
+
+    if (name && val) {
+      input = document.querySelector(`input[name="${name}"][value="${val}"]`);
+    }
+    if (!input && val) {
+      input = document.querySelector(`input[value="${val}"]`);
+    }
+
+    if (input) {
+      label = input.closest('label') || input.parentElement;
+    } else if (pattern) {
+      const reg = new RegExp(pattern, 'i');
+      const allLabels = Array.from(document.querySelectorAll('label, .scSharedMaterialtroubleshooterFlowquestion label, .question label'));
+      for (const l of allLabels) {
+        const txt = (l.innerText || l.textContent || '').trim();
+        if (reg.test(txt)) {
+          label = l;
+          input = l.querySelector('input[type="radio"]') || (l.htmlFor ? document.getElementById(l.htmlFor) : null);
+          if (input) break;
+        }
+      }
+    }
+
+    if (label || input) {
+      const clickTarget = label || input;
+      clickTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      clickTarget.click();
+      if (input) {
+        input.checked = true;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return true;
+    }
+    return false;
+  }, inputName, inputValue, textPattern).catch(() => false);
+
+  if (clicked) {
+    console.log(`   ✅ Selected: "${labelDescription}"`);
+    await sleep(randomBetween(1800, 2600));
+    return true;
+  }
+
+  console.warn(`   ⚠️ Could not select "${labelDescription}" directly.`);
+  return false;
+}
+
+/**
+ * Checks whether the "Defamation" option is currently rendered and visible in DOM
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function isDefamationAvailable(page) {
+  return await page.evaluate(() => {
+    // 1. Check by exact value 15220331 (legacy) or 16944292 (AI branch)
+    const byVal = document.querySelector('input[value="15220331"], input[value="16944292"]');
+    if (byVal) {
+      const parentLabel = byVal.closest('label') || byVal.parentElement;
+      if (parentLabel) {
+        const style = window.getComputedStyle(parentLabel);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          return true;
+        }
+      } else {
+        return true;
+      }
+    }
+
+    // 2. Check by text in visible labels
+    const labels = Array.from(document.querySelectorAll('label, .scSharedMaterialtroubleshooterFlowquestion label, .question label'));
+    for (const l of labels) {
+      const txt = (l.innerText || l.textContent || '').toLowerCase();
+      if (txt.includes('defamation')) {
+        const style = window.getComputedStyle(l);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }).catch(() => false);
+}
+
+/**
+ * Waits for step 5 options to expand in the DOM
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {number} [timeoutMs]
+ */
+async function waitForStep5Options(page, timeoutMs = 6000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const ready = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('label, .scSharedMaterialtroubleshooterFlowquestion label, .question label'));
+      for (const l of labels) {
+        const txt = (l.innerText || l.textContent || '').toLowerCase();
+        if (txt.includes('defamation') || txt.includes('legal reason not listed') || txt.includes('other:')) {
+          const style = window.getComputedStyle(l);
+          if (style.display !== 'none' && style.visibility !== 'hidden') {
+            return true;
+          }
+        }
+      }
+      return false;
+    }).catch(() => false);
+
+    if (ready) return true;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return false;
+}
+
+/**
+ * Visually and naturally reselects Step 2 to "Yes" and completes the AI-direct branch.
+ * Employs smooth window scrolling, natural mouse movements, uncollapsing edit icon,
+ * and realistic human pauses.
+ *
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {Object} [options]
+ * @param {Object} [options.cursor]
+ * @param {Function} [options.sleep]
+ * @returns {Promise<boolean>}
+ */
+async function visuallyReselectStep2AI(page, options = {}) {
+  const sleep = options.sleep || defaultSleep;
+  const cursor = options.cursor;
+
+  console.log('🔄 [Visual Reselection]: "Defamation" not found under "Maps".');
+  console.log('👀 [Visual Reselection]: Smoothly scrolling up to Step 2 (AI Generated Content Check)...');
+
+  // 1. Smoothly scroll back up to Step 2
+  await page.evaluate(() => {
+    const q2 = document.getElementById('14440196_legend')
+      || document.querySelector('[name="14440196"]')?.closest('.question')
+      || document.querySelector('[data-stats-id="14440196"]')
+      || document.querySelector('[data-stats-id="9723198"]');
+    if (q2) {
+      q2.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      window.scrollTo({ top: 250, behavior: 'smooth' });
+    }
+  }).catch(() => {});
+  await sleep(randomBetween(1200, 1800));
+
+  // 2. Uncollapse Step 2 if collapsed (click edit pencil)
+  const uncollapsed = await page.evaluateHandle(() => {
+    const q2 = document.querySelector('[name="14440196"]')?.closest('.question')
+      || document.getElementById('14440196_legend')?.closest('.question');
+    if (q2 && q2.classList.contains('answered')) {
+      const editBtn = q2.querySelector('svg[aria-label="Edit selection"], .choice, svg');
+      return editBtn || q2;
+    }
+    return null;
+  }).catch(() => null);
+
+  if (uncollapsed && (await uncollapsed.asElement())) {
+    console.log('✏️ [Visual Reselection]: Uncollapsing Step 2 via Edit selection button...');
+    if (cursor && typeof cursor.moveTo === 'function') {
+      await cursor.moveTo(uncollapsed).catch(() => {});
+      await sleep(randomBetween(350, 600));
+    }
+    await page.evaluate(el => el.click(), uncollapsed).catch(() => {});
+    await sleep(randomBetween(900, 1500));
+  }
+
+  // 3. Move cursor naturally and click "Yes" radio option
+  console.log('👉 [Visual Reselection]: Selecting "Yes" on AI Generated Content Check...');
+  const selectedYes = await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step2AIYes, { sleep, cursor });
+  if (!selectedYes) {
+    console.warn('⚠️ [Visual Reselection]: Failed to select Step 2 "Yes"');
+    return false;
+  }
+  await sleep(randomBetween(1600, 2400));
+
+  // 4. Smoothly scroll and click "Legal Reasons to Report Content"
+  console.log('👉 [Visual Reselection]: Selecting "Legal Reasons to Report Content"...');
+  const selectedLegal = await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step3LegalReasonsAI, { sleep, cursor });
+  if (!selectedLegal) {
+    console.warn('⚠️ [Visual Reselection]: Failed to select AI Legal Reasons');
+    return false;
+  }
+  await sleep(randomBetween(1600, 2400));
+
+  // 5. Smoothly scroll and click "Defamation"
+  console.log('🎯 [Visual Reselection]: Selecting "Defamation" under AI branch...');
+  const selectedDefamation = await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step4DefamationAI, { sleep, cursor });
+  if (!selectedDefamation) {
+    console.warn('⚠️ [Visual Reselection]: Failed to select AI Defamation');
+    return false;
+  }
+  await sleep(randomBetween(1800, 2600));
+
+  return true;
+}
+
+/**
  * Automates Stage 1: Google Legal Troubleshooter (1114905)
- * Clicks the exact 5-step radio sequence with human reading pauses and triggers "Create request" visibly.
+ * Smart adaptive navigation:
+ * - Checks if the specific review link has a known working path ('ai_yes').
+ * - If 'ai_yes': directly traverses Product -> AI Check: Yes -> Legal Reasons -> Defamation.
+ * - Otherwise: traverses initial legacy flow; if Defamation is missing, visually reselects
+ *   Step 2 to "Yes", completes flow, and saves 'ai_yes' for this specific review link.
  * 
  * @param {import('rebrowser-puppeteer-core').Page} page
  * @param {Object} [options]
  * @param {Object} [options.cursor] ghost-cursor instance
  * @param {Function} [options.smartClick]
  * @param {Function} [options.sleep]
+ * @param {string} [options.reviewUrl] Specific review URL being reported
  * @returns {Promise<boolean>}
  */
 async function walkthroughTroubleshooter(page, options = {}) {
   const sleep = options.sleep || defaultSleep;
   const smartClick = options.smartClick || defaultSmartClick;
   const cursor = options.cursor;
+  const reviewUrl = options.reviewUrl || '';
+  const preferredPath = getReviewLinkPreferredPath(reviewUrl);
 
-  console.log('\n===========================================================');
-  console.log('⚖️ [Stage 1] Executing Google Legal Troubleshooter (1114905)...');
-  console.log('===========================================================');
+  console.log('\n[Stage 1] Google Legal Troubleshooter (1114905)...');
 
   try {
     const currentUrl = page.url();
@@ -269,94 +793,161 @@ async function walkthroughTroubleshooter(page, options = {}) {
         waitUntil: 'networkidle2',
         timeout: 45000
       });
-      // Human pause looking at newly loaded troubleshooter page
-      await sleep(randomBetween(2400, 3400));
+      await sleep(randomBetween(1500, 2500));
     }
 
-    // Iterate through all 5 questions with human reading cadence
-    for (const stepConfig of TROUBLESHOOTER_STEPS) {
-      // Human reading pause before selecting
-      console.log(`👀 Step ${stepConfig.step}/5: Reading question options for "${stepConfig.labelDescription}"...`);
-      await sleep(randomBetween(1800, 2600));
-
-      const radioSelector = `input[name="${stepConfig.inputName}"][value="${stepConfig.inputValue}"]`;
-
-      // Wait for radio input to be attached in DOM
-      let radioHandle = await page.waitForSelector(radioSelector, { timeout: 15000 }).catch(() => null);
-
-      if (!radioHandle) {
-        console.warn(`⚠️ Step ${stepConfig.step}: Radio selector ${radioSelector} not directly found. Attempting DOM evaluation...`);
-      }
-
-      // 1. Smoothly scroll the option into view
-      await page.evaluate((name, val) => {
-        const input = document.querySelector(`input[name="${name}"][value="${val}"]`);
-        if (input) {
-          const target = input.closest('label') || input;
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // -------------------------------------------------------------------------
+    // Synchronize: Ensure Troubleshooter container is physically loaded in DOM
+    // -------------------------------------------------------------------------
+    console.log('⏳ [Browser Sync]: Verifying Troubleshooter container in DOM...');
+    const containerReady = await page.waitForSelector('.ts, #1114905, .question, [data-stats-id="1114905"]', {
+      timeout: 10000
+    }).catch(() => null);
+    if (!containerReady) {
+      const anomaly = await detectPageAnomaly(page);
+      if (anomaly.isAnomaly) {
+        if (anomaly.type === 'CAPTCHA') {
+          try {
+            const { handlePageCaptcha } = require('../captcha/captcha_solver');
+            console.log('🧩 [Troubleshooter Sync]: Detected CAPTCHA before form open. Invoking Auto-Solver...');
+            const cRes = await handlePageCaptcha(page);
+            if (cRes.solved) {
+              console.log('🎉 [Troubleshooter Sync]: CAPTCHA bypassed successfully!');
+              await page.waitForSelector('.ts, #1114905, .question, [data-stats-id="1114905"]', { timeout: 15000 }).catch(() => null);
+            }
+          } catch (_) {}
         }
-      }, stepConfig.inputName, stepConfig.inputValue);
-
-      // Pause so user sees the scrolling complete
-      await sleep(randomBetween(600, 1000));
-
-      // 2. Move mouse cursor to the radio option if cursor available
-      if (cursor && radioHandle) {
-        await cursor.moveTo(radioHandle).catch(() => { });
-        await sleep(randomBetween(300, 600));
-      }
-
-      // 3. Safe humanized click on either label or radio button
-      const clicked = await page.evaluate((name, val) => {
-        const input = document.querySelector(`input[name="${name}"][value="${val}"]`);
-        if (!input) return false;
-
-        const label = input.closest('label') || input.parentElement;
-        if (label) {
-          label.click();
-          input.checked = true;
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
+        const postCheck = await detectPageAnomaly(page);
+        if (postCheck.isAnomaly) {
+          throw new Error(`Troubleshooter page blocked: ${postCheck.message}`);
         }
-
-        input.click();
-        input.checked = true;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }, stepConfig.inputName, stepConfig.inputValue);
-
-      if (!clicked && radioHandle) {
-        await radioHandle.click({ delay: 100 });
       }
+      console.warn('⚠️ Troubleshooter container selector not immediately detected; continuing best-effort...');
+    } else {
+      console.log('   ✅ Troubleshooter container verified in DOM.');
+    }
 
-      console.log(`   ✅ Step ${stepConfig.step}/5 selected: "${stepConfig.labelDescription}"`);
-      // Human pause watching Google troubleshooter animate/expand next question
-      await sleep(randomBetween(2000, 2800));
+    if (preferredPath === 'ai_yes') {
+      console.log('🎯 [Link Memory Hit]: This review link was previously verified to require AI="Yes". Proceeding directly via AI branch...');
+
+      // [Troubleshooter 1/4] Product Selection: "Google Maps, Waze and related products"
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step1, { timeout: 20000 });
+      console.log('\n[Troubleshooter 1/4] Product Selection: "Google Maps, Waze and related products"...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step1, { sleep, cursor });
+
+      // [Troubleshooter 2/4] AI Generated Content: "Yes"
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step2AIYes, { timeout: 20000 });
+      console.log('\n[Troubleshooter 2/4] AI Generated Content Check: "Yes"...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step2AIYes, { sleep, cursor });
+
+      // [Troubleshooter 3/4] Legal Reasons to Report Content
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step3LegalReasonsAI, { timeout: 20000 });
+      console.log('\n[Troubleshooter 3/4] Legal Reasons to Report Content...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step3LegalReasonsAI, { sleep, cursor });
+
+      // [Troubleshooter 4/4] Legal Grounds - Defamation
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step4DefamationAI, { timeout: 20000 });
+      console.log('\n[Troubleshooter 4/4] Legal Grounds - Defamation...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step4DefamationAI, { sleep, cursor });
+    } else {
+      // -------------------------------------------------------------------------
+      // [Step 1] Product Selection: "Google Maps, Waze and related products"
+      // -------------------------------------------------------------------------
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step1, { timeout: 20000 });
+      console.log('\n[Troubleshooter 1/5] Product Selection...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step1, { sleep, cursor });
+
+      // -------------------------------------------------------------------------
+      // [Step 2] AI Generated Content Check: "No"
+      // -------------------------------------------------------------------------
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step2, { timeout: 20000 });
+      console.log('\n[Troubleshooter 2/5] AI Generated Content Check...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step2, { sleep, cursor });
+
+      // -------------------------------------------------------------------------
+      // [Step 3] Specific Maps Product: Initially select "Maps" (Primary)
+      // -------------------------------------------------------------------------
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step3Maps, { timeout: 20000 });
+      console.log('\n[Troubleshooter 3/5] Primary selection: "Maps"...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step3Maps, { sleep, cursor });
+
+      // -------------------------------------------------------------------------
+      // [Step 4] Legal vs Policy Reason: "Legal Reasons to Report Content"
+      // -------------------------------------------------------------------------
+      await waitForTroubleshooterQuestion(page, TROUBLESHOOTER_OPTIONS.step4, { timeout: 20000 });
+      console.log('\n[Troubleshooter 4/5] Legal vs Policy Reason...');
+      await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step4, { sleep, cursor });
+
+      // -------------------------------------------------------------------------
+      // [Step 5] Check if "Defamation" is available under "Maps"
+      // -------------------------------------------------------------------------
+      console.log('\n[Troubleshooter 5/5] Checking if "Defamation" option is available under "Maps"...');
+      await waitForStep5Options(page, 4500);
+      let defamationAvailable = await isDefamationAvailable(page);
+
+      if (defamationAvailable) {
+        console.log('🎯 [Step 5] "Defamation" is available under "Maps"! Selecting Defamation...');
+        await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step5Defamation, { sleep, cursor });
+      } else {
+        console.warn('⚠️ [Step 5] "Defamation" was NOT found under "Maps". Initiating visual reselection...');
+
+        // Trigger human-like visual reselection to Step 2 "Yes"
+        const reselected = await visuallyReselectStep2AI(page, { sleep, cursor });
+        if (reselected) {
+          if (reviewUrl) {
+            setReviewLinkPreferredPath(reviewUrl, 'ai_yes');
+            console.log(`💾 [Link Memory Saved]: Successfully saved 'ai_yes' preference for review link: "${reviewUrl.slice(0, 60)}..."`);
+          }
+        } else {
+          console.log('🔄 [Auto Fallback]: Reselection incomplete. Changing Step 3 to "Local listings"...');
+          await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step3LocalListings, { sleep, cursor });
+          await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step4, { sleep, cursor });
+          await waitForStep5Options(page, 4500);
+          defamationAvailable = await isDefamationAvailable(page);
+
+          if (defamationAvailable) {
+            console.log('🎯 [Step 5] "Defamation" found under Local listings! Selecting Defamation...');
+            await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step5Defamation, { sleep, cursor });
+          } else {
+            console.log('🛡️ [Step 5] "Defamation" not present. Selecting fallback "Other: Report content for a legal reason not listed above..."');
+            const selectedOther = await selectOptionByCriteria(page, TROUBLESHOOTER_OPTIONS.step5Other, { sleep, cursor });
+            if (!selectedOther) {
+              console.warn('⚠️ Selecting last available legal option in Step 5 as final fallback...');
+              await page.evaluate(() => {
+                const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+                const visible = radios.filter(r => r.offsetParent !== null);
+                if (visible.length > 0) {
+                  const last = visible[visible.length - 1];
+                  const label = last.closest('label') || last;
+                  label.click();
+                  last.checked = true;
+                  last.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+              }).catch(() => {});
+            }
+          }
+        }
+      }
     }
 
     // Step 6: Locate, scroll to, hover and click "Create request" button VISIBLY
-    console.log('\n⏳ Waiting for "Create request" action section to expand...');
-    await sleep(randomBetween(1800, 2600));
-
-    let createBtnHandle = null;
-    let createBtnHref = '';
-
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const candidates = await page.$$('button, a, [role="button"], .material-button, input[type="button"], input[type="submit"]').catch(() => []);
+    console.log('\n⏳ [Browser Sync]: Waiting for "Create request" button to become actionable in DOM...');
+    const createBtnHandle = await waitForActionableElement(page, async (p) => {
+      const candidates = await p.$$('button, a, [role="button"], .material-button, input[type="button"], input[type="submit"]').catch(() => []);
       for (const btn of candidates) {
-        const txt = await page.evaluate(el => (el.innerText || el.textContent || el.value || '').trim().toLowerCase(), btn).catch(() => '');
+        const txt = await p.evaluate(el => (el.innerText || el.textContent || el.value || '').trim().toLowerCase(), btn).catch(() => '');
         if (txt === 'create request' || txt.includes('create request')) {
-          createBtnHandle = btn;
-          createBtnHref = await page.evaluate(el => el.getAttribute('href') || '', btn).catch(() => '');
-          break;
+          return btn;
         }
       }
-      if (createBtnHandle) break;
-      await sleep(700);
-    }
+      return null;
+    }, {
+      timeout: 20000,
+      description: '"Create request" button'
+    });
 
     if (createBtnHandle) {
-      console.log('===========================================================');
+      console.log('-----------------------------------------------------------');
       console.log('📍 [Create request] button located!');
       console.log('   Scrolling button directly to screen center...');
 
@@ -390,7 +981,7 @@ async function walkthroughTroubleshooter(page, options = {}) {
 
       await createBtnHandle.click({ delay: 180 });
       console.log('✅ [Create request] button successfully clicked!');
-      console.log('===========================================================\n');
+      console.log('-----------------------------------------------------------\n');
 
       // Give sufficient time for tab to spawn or redirect
       await sleep(randomBetween(3500, 4500));
@@ -445,19 +1036,49 @@ async function fillLegalRemovalForm(activePage, options = {}) {
   const sleep = options.sleep || defaultSleep;
   const smartClick = options.smartClick || defaultSmartClick;
   const cursor = options.cursor;
+  const captchaApiKey = options.captchaApiKey;
 
   const reviewUrl = options.reviewUrl;
   const legalNotice = options.legalNotice || {};
   const senderInfo = options.senderInfo || {};
 
-  // Human initial delay: looking at newly opened form
-  console.log('⏳ Waiting for Legal Removal Form components to load...');
-  await activePage.waitForSelector('[data-test-id="form-container"], page-legal-other-geo-form, gdf-form', {
-    timeout: 30000
-  }).catch(() => null);
+  // Synchronize with Legal Removal Form container
+  console.log('⏳ Synchronizing with Legal Removal Form...');
+  const formElement = await waitForActionableElement(
+    activePage,
+    '[data-test-id="form-display-name"], [data-test-id="form-container-component-region"], [gdf-id="region"], [data-test-id="form-container-component-full-name"], [gdf-id="full-name"], [data-test-id="form-container"], form, gdf-form',
+    {
+      timeout: 15000,
+      visible: true,
+      description: 'Legal Removal Form'
+    }
+  );
+
+  if (!formElement) {
+    const anomaly = await detectPageAnomaly(activePage);
+    if (anomaly.hasAnomaly || anomaly.isAnomaly) {
+      if (anomaly.type === 'CAPTCHA') {
+        try {
+          const { handlePageCaptcha } = require('../captcha/captcha_solver');
+          console.log('🧩 [Legal Form Sync]: Detected CAPTCHA before legal form open. Invoking Auto-Solver...');
+          const cRes = await handlePageCaptcha(activePage, { apiKey: captchaApiKey || options.captchaApiKey });
+          if (cRes.solved) {
+            console.log('🎉 [Legal Form Sync]: CAPTCHA bypassed successfully!');
+          }
+        } catch (_) {}
+      }
+      const postAnomaly = await detectPageAnomaly(activePage);
+      if (postAnomaly.hasAnomaly || postAnomaly.isAnomaly) {
+        console.error(`🚨 Browser Anomaly Detected: ${postAnomaly.message}`);
+        return { success: false, error: postAnomaly.message };
+      }
+    } else {
+      console.warn('⚠️ Legal Removal Form container not detected within 30s. Continuing best-effort...');
+    }
+  }
 
   await activePage.bringToFront().catch(() => { });
-  await sleep(randomBetween(2600, 3600)); // Human reading overview header
+  await sleep(randomBetween(1800, 2600)); // Human reading overview header
 
   // 1. Resolve Real Human Name from Logged-in Google Account / Mail
   let fullName = (senderInfo.fullName || '').trim();
@@ -478,16 +1099,15 @@ async function fillLegalRemovalForm(activePage, options = {}) {
     }
   }
 
+  // Always sanitize, deduplicate, and properly capitalize the full legal name
+  fullName = formatCleanHumanName(fullName);
+  console.log(`👤 Final sanitized complainant name: "${fullName}"`);
+
   const country = (senderInfo.country || 'United States').trim();
   const legalExplanation = (legalNotice.legalClaimText || '').trim().slice(0, 950);
 
-  console.log('\n===========================================================');
-  console.log('⚖️ [Stage 2] Automating Google Legal Removal Form (Human Paced)...');
-  console.log(`   Complainant Real Name: ${fullName}`);
-  console.log(`   Country:                ${country}`);
-  console.log(`   Target Review:          ${reviewUrl}`);
-  console.log(`   Legal Claim Len:        ${legalExplanation.length} chars (Limit: 1000)`);
-  console.log('===========================================================');
+  console.log(`\n[Stage 2] Legal Removal Form (${fullName} | ${country})`);
+  console.log(`[Stage 2] Target: ${reviewUrl} (${legalExplanation.length}/1000 chars)`);
 
   try {
     // 2. Select Country of Residence
@@ -611,17 +1231,23 @@ async function fillLegalRemovalForm(activePage, options = {}) {
       await sleep(200);
 
       // Human Paste Simulation: write to clipboard and press Ctrl+V
-      await activePage.evaluate((url) => {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(url).catch(() => { });
-        }
-      }, targetReviewUrl);
-      await sleep(250);
+      const clipboardWritten = await activePage.evaluate(async (url) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+            return true;
+          }
+        } catch (_) {}
+        return false;
+      }, targetReviewUrl).catch(() => false);
 
-      await activePage.keyboard.down('Control');
-      await activePage.keyboard.press('KeyV');
-      await activePage.keyboard.up('Control');
-      await sleep(250);
+      if (clipboardWritten) {
+        await sleep(200);
+        await activePage.keyboard.down('Control');
+        await activePage.keyboard.press('KeyV');
+        await activePage.keyboard.up('Control');
+        await sleep(250);
+      }
 
       // Verify Angular model registration & apply fallback if clipboard paste did not populate value
       const verifiedVal = await activePage.evaluate((el, val) => {
@@ -750,9 +1376,16 @@ async function fillLegalRemovalForm(activePage, options = {}) {
 
     if (isSubmitDisabled) {
       console.log('ℹ️ Submit button is currently disabled (awaiting reCAPTCHA completion).');
-      console.log('⏳ Checking reCAPTCHA widget...');
+      console.log('🧩 Triggering CAPTCHA Auto-Solver Engine...');
 
-      // Give 25 seconds for automatic token completion or user interaction
+      try {
+        const { handlePageCaptcha } = require('../captcha/captcha_solver');
+        await handlePageCaptcha(activePage, { apiKey: options.captchaApiKey });
+      } catch (cErr) {
+        console.warn('⚠️ CAPTCHA Auto-Solver notice:', cErr.message);
+      }
+
+      // Check reCAPTCHA status again
       let waitSeconds = 0;
       while (waitSeconds < 25) {
         const stillDisabled = await activePage.evaluate(() => {
@@ -782,17 +1415,66 @@ async function fillLegalRemovalForm(activePage, options = {}) {
       return false;
     });
 
+    let successConfirmed = false;
+    let extractedReportId = null;
+
     if (submitClicked) {
       console.log('✅ Submit button clicked successfully!');
-      await sleep(3500);
+      console.log('⏳ Awaiting Google Legal confirmation response & success page...');
+
+      try {
+        // Wait up to 35s for Google's Angular <success-page> component to mount
+        const successElement = await activePage.waitForSelector(
+          'success-page, [data-test-id="success-page"], [data-test-id="report-id"], .success-page',
+          { timeout: 35000, visible: true }
+        ).catch(() => null);
+
+        if (successElement) {
+          successConfirmed = true;
+          // Extract the exact Report ID from Google
+          extractedReportId = await activePage.evaluate(() => {
+            const idEl = document.querySelector('[data-test-id="report-id"]');
+            if (idEl) return idEl.textContent.trim();
+            const textNodes = document.querySelectorAll('p, div, span');
+            for (const node of textNodes) {
+              if (node.textContent.includes('Report ID:')) {
+                return node.textContent.trim();
+              }
+            }
+            return null;
+          }).catch(() => null);
+
+          console.log(`🎉 [Google Legal Removal SUCCESS]: ${extractedReportId || 'Confirmed!'}`);
+          console.log('✅ Success page rendered and verified.');
+          // Allow full render before screenshot
+          await sleep(2000);
+        } else {
+          console.warn('⚠️ Success page selector timed out; verifying page content...');
+          const pageText = await activePage.evaluate(() => document.body.innerText).catch(() => '');
+          if (pageText.includes('Thank you for submitting') || pageText.includes('Report ID:')) {
+            successConfirmed = true;
+            const m = pageText.match(/Report ID:\s*([0-9-]+)/);
+            if (m) extractedReportId = m[0];
+            console.log(`🎉 [Google Legal Removal SUCCESS]: ${extractedReportId || 'Confirmed!'}`);
+          }
+        }
+      } catch (waitErr) {
+        console.warn('ℹ️ Notice while awaiting success page:', waitErr.message);
+      }
     } else {
-      console.log('ℹ️ Form prepared and filled completely. Capture proof screenshot...');
+      console.warn('⚠️ Submit button could not be clicked or confirmed.');
     }
 
-    // 12. Capture Proof Screenshot
+    // 12. Capture Proof Screenshot (Now capturing verified Success Page with Report ID)
     const proofRes = await captureProofScreenshot(activePage, 'legal_submission');
     const screenshotPath = proofRes ? proofRes.filename : 'report_logs/proofs';
     console.log(`📸 Legal Notice submission proof saved: ${screenshotPath}`);
+
+    // Allow user to clearly see the verified success page on screen
+    if (successConfirmed) {
+      console.log('👀 Displaying verified success page on screen for 5 seconds...');
+      await sleep(5000);
+    }
 
     // 13. Save Formal Legal Notice Dossier to Disk
     const timestamp = Date.now();
@@ -812,6 +1494,7 @@ async function fillLegalRemovalForm(activePage, options = {}) {
       grounds: legalNotice.legalGrounds || 'Defamation Per Se',
       statutoryCitation: '16 C.F.R. § 465.2 & Defamation Per Se',
       legalClaimText: legalExplanation,
+      reportId: extractedReportId || null,
       proofScreenshot: screenshotPath
     };
 
@@ -823,7 +1506,8 @@ Target Review URL: ${reviewUrl}
 Complainant:       ${fullName}
 Country:           ${country}
 Date Filed:        ${new Date().toUTCString()}
-Status:            SUBMITTED
+Status:            ${(submitClicked || successConfirmed) ? 'SUBMITTED_AND_CONFIRMED' : 'PREPARED_UNSUBMITTED'}
+Official Report ID:${extractedReportId ? ' ' + extractedReportId : ' N/A'}
 ===============================================================
 
 LEGAL GROUNDS & REGULATORY CITATIONS:
@@ -844,7 +1528,9 @@ Proof Screenshot: ${screenshotPath}
     console.log(`💾 Legal Notice Dossier archived: legal_notices/notice_${timestamp}.txt`);
 
     return {
-      success: true,
+      success: successConfirmed || !!submitClicked,
+      submitted: !!submitClicked,
+      reportId: extractedReportId,
       proofScreenshot: screenshotPath,
       dossierPath: dossierTxtPath
     };
@@ -859,11 +1545,11 @@ Proof Screenshot: ${screenshotPath}
  * @param {Object} options
  */
 async function executeFullLegalFlow(options) {
-  const { page, reportPage, reviewUrl, legalNotice, senderInfo, sleep, smartClick, cursor, browser } = options;
+  const { page, reportPage, reviewUrl, legalNotice, senderInfo, sleep, smartClick, cursor, browser, captchaApiKey } = options;
   const activePage = reportPage || page;
 
   // Stage 1: Walkthrough Troubleshooter
-  const stage1Success = await walkthroughTroubleshooter(activePage, { sleep, smartClick, cursor });
+  const stage1Success = await walkthroughTroubleshooter(activePage, { sleep, smartClick, cursor, reviewUrl });
   if (!stage1Success) {
     console.warn('⚠️ Stage 1 Troubleshooter encountered a warning; continuing to Stage 2 if form is reachable.');
   }
@@ -873,27 +1559,23 @@ async function executeFullLegalFlow(options) {
   try {
     const activeBrowser = browser || (typeof activePage.browser === 'function' ? activePage.browser() : (typeof page?.browser === 'function' ? page.browser() : null));
     if (activeBrowser) {
-      console.log('🔍 Detecting Legal Removal Form tab (polling up to 10s)...');
-      for (let attempt = 0; attempt < 10; attempt++) {
-        await (sleep || defaultSleep)(1000);
-        const allPages = await activeBrowser.pages().catch(() => []);
-        const legalTab = allPages.find(p => {
+      console.log('🔍 Synchronizing with Legal Removal Form tab / redirection...');
+      const targetPatterns = [
+        'reportcontent.google.com',
+        'contact/lr_legalother',
+        'contact/lr_',
+        p => {
           const u = p.url();
-          return (u.includes('reportcontent.google.com') || u.includes('contact/lr_') || (u.includes('legal') && !u.includes('1114905'))) && p !== activePage;
-        });
-
-        if (legalTab) {
-          console.log(`📑 Detected Legal Removal Form in a new tab: ${legalTab.url()}`);
-          formPage = legalTab;
-          await formPage.bringToFront().catch(() => { });
-          break;
+          return u.includes('legal') && !u.includes('1114905');
         }
-
-        if (activePage.url().includes('reportcontent.google.com') || activePage.url().includes('contact/lr_')) {
-          console.log('📑 Active page redirected to Legal Removal Form.');
-          formPage = activePage;
-          break;
-        }
+      ];
+      const transitionedPage = await waitForPageOrTabTransition(activeBrowser, activePage, targetPatterns, {
+        timeout: 25000,
+        actionName: 'Legal Removal Form'
+      });
+      if (transitionedPage) {
+        formPage = transitionedPage;
+        await formPage.bringToFront().catch(() => { });
       }
     }
   } catch (tabErr) {
@@ -907,7 +1589,8 @@ async function executeFullLegalFlow(options) {
     senderInfo,
     sleep,
     smartClick,
-    cursor
+    cursor,
+    captchaApiKey
   });
 
   return result;
@@ -915,7 +1598,18 @@ async function executeFullLegalFlow(options) {
 
 module.exports = {
   walkthroughTroubleshooter,
+  visuallyReselectStep2AI,
+  getReviewLinkPreferredPath,
+  setReviewLinkPreferredPath,
+  clearReviewLinkPreferences,
+  normalizeReviewUrl,
   fillLegalRemovalForm,
   executeFullLegalFlow,
-  TROUBLESHOOTER_STEPS
+  TROUBLESHOOTER_STEPS,
+  TROUBLESHOOTER_OPTIONS,
+  selectOptionByCriteria,
+  isDefamationAvailable,
+  waitForStep5Options,
+  formatCleanHumanName,
+  deduplicateWords
 };

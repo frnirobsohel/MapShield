@@ -6,6 +6,7 @@
 const biometrics = require('./biometrics');
 const stealth = require('./stealth');
 const domUtils = require('./dom_utils');
+const domObserver = require('./dom_observer');
 const screenshotPaths = require('./screenshot_paths');
 const cryptoUtils = require('./crypto_utils');
 
@@ -23,12 +24,18 @@ module.exports = {
 
   // Deep Stealth Camouflage
   applyDeepStealth: stealth.applyDeepStealth,
+  attachDialogAutoHandler: stealth.attachDialogAutoHandler,
 
-  // DOM Interactions
+  // DOM Interactions & Actionability Engine
   smartClick: domUtils.smartClick,
   clickElementByText: domUtils.clickElementByText,
   clickGoogleNext: domUtils.clickGoogleNext,
   handleConsentIfPresent: domUtils.handleConsentIfPresent,
+  detectPageAnomaly: domObserver.detectPageAnomaly,
+  isElementActionable: domObserver.isElementActionable,
+  waitForActionableElement: domObserver.waitForActionableElement,
+  waitForPageOrTabTransition: domObserver.waitForPageOrTabTransition,
+  waitForTroubleshooterQuestion: domObserver.waitForTroubleshooterQuestion,
 
   // Screenshot & Report Logs Manager
   screenshotPaths,

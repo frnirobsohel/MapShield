@@ -1,5 +1,12 @@
 const { app, BrowserWindow, session } = require('electron');
 const path = require('path');
+
+// Ensure production user data directory & packaged state are set before initializing database or submodules
+if (!process.env.MAPSSHIELD_USER_DATA) {
+  process.env.MAPSSHIELD_USER_DATA = app.getPath('userData');
+}
+process.env.MAPSSHIELD_PACKAGED = app.isPackaged ? 'true' : 'false';
+
 const { getDatabase } = require(path.join(__dirname, '../database/db'));
 const {
   registerAllIpcHandlers,
@@ -41,7 +48,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 

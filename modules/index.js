@@ -4,14 +4,27 @@
  */
 
 const { BrowserManager, SessionManager, UserAgentManager } = require('./browser');
-const { ProxyManager, parseProxy, formatProxyString } = require('./network');
+const {
+  ProxyManager,
+  parseProxy,
+  formatProxyString,
+  NETWORK_ERROR_PATTERNS,
+  isNetworkError,
+  isPageOffline
+} = require('./network');
 const {
   runMapsReporter,
   DEFAULT_MAPS_URL,
   walkthroughTroubleshooter,
+  visuallyReselectStep2AI,
+  getReviewLinkPreferredPath,
+  setReviewLinkPreferredPath,
+  clearReviewLinkPreferences,
+  normalizeReviewUrl,
   fillLegalRemovalForm,
   executeFullLegalFlow,
-  TROUBLESHOOTER_STEPS
+  TROUBLESHOOTER_STEPS,
+  TROUBLESHOOTER_OPTIONS
 } = require('./reporter');
 const {
   reviewViolationWithGemini,
@@ -35,14 +48,23 @@ module.exports = {
   ProxyManager,
   parseProxy,
   formatProxyString,
+  NETWORK_ERROR_PATTERNS,
+  isNetworkError,
+  isPageOffline,
 
   // Automation & Reporter
   runMapsReporter,
   DEFAULT_MAPS_URL,
   walkthroughTroubleshooter,
+  visuallyReselectStep2AI,
+  getReviewLinkPreferredPath,
+  setReviewLinkPreferredPath,
+  clearReviewLinkPreferences,
+  normalizeReviewUrl,
   fillLegalRemovalForm,
   executeFullLegalFlow,
   TROUBLESHOOTER_STEPS,
+  TROUBLESHOOTER_OPTIONS,
 
   // Artificial Intelligence
   reviewViolationWithGemini,
@@ -66,7 +88,13 @@ module.exports = {
   humanWanderMouse: helpers.humanWanderMouse,
   humanType: helpers.humanType,
   applyDeepStealth: helpers.applyDeepStealth,
+  attachDialogAutoHandler: helpers.attachDialogAutoHandler,
   smartClick: helpers.smartClick,
+  detectPageAnomaly: helpers.detectPageAnomaly,
+  isElementActionable: helpers.isElementActionable,
+  waitForActionableElement: helpers.waitForActionableElement,
+  waitForPageOrTabTransition: helpers.waitForPageOrTabTransition,
+  waitForTroubleshooterQuestion: helpers.waitForTroubleshooterQuestion,
 
   // Screenshot & Report Logs
   captureProofScreenshot: helpers.captureProofScreenshot,

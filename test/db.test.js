@@ -112,3 +112,94 @@ test('db: saves and retrieves settings with encrypted AI API key', () => {
   const rawRow = db.db.prepare('SELECT value FROM app_settings WHERE key = ?').get('aiApiKey');
   assert.ok(rawRow.value.startsWith('ENC:'), 'Raw database AI key must be encrypted with ENC: prefix');
 });
+
+test('db: saveAccounts UPSERT preserves lastUsedAt and usedCount on subsequent saves', () => {
+  const db = new DatabaseService(TEST_DB_PATH);
+  const email = 'upsert_test@gmail.com';
+
+  // 1. Initial save
+  db.saveAccounts([
+    {
+      email,
+      password: 'Pass1',
+      twoFactor: '2fa_initial',
+      backupCode: 'backup_initial'
+    }
+  ]);
+
+  // 2. Mark account as used with lastUsedAt
+  db.updateAccountStatus(email, {
+    status: 'success',
+    used: true,
+    timestamp: '2026-09-23 21:00:00'
+  });
+
+  const afterUse = db.getAccounts().find(a => a.email === email);
+  assert.strictEqual(afterUse.used, true);
+  assert.strictEqual(afterUse.usedCount, 1);
+  assert.strictEqual(afterUse.lastUsedAt, '2026-09-23 21:00:00');
+
+  // 3. User updates password from UI (UI passes new password, but no lastUsedAt)
+  db.saveAccounts([
+    {
+      email,
+      password: 'NewPassUpdated!',
+      twoFactor: '2fa_initial',
+      backupCode: 'backup_initial',
+      used: true,
+      usedCount: 1
+    }
+  ]);
+
+  const afterEdit = db.getAccounts().find(a => a.email === email);
+  assert.strictEqual(afterEdit.password, 'NewPassUpdated!', 'Password should be updated');
+  assert.strictEqual(afterEdit.used, true, 'used status must be preserved');
+  assert.strictEqual(afterEdit.usedCount, 1, 'usedCount must be preserved');
+  assert.strictEqual(afterEdit.lastUsedAt, '2026-09-23 21:00:00', 'lastUsedAt timestamp must NOT be wiped');
+});
+
+test('db: saveLinks UPSERT preserves doneCount on subsequent saves', () => {
+  const db = new DatabaseService(TEST_DB_PATH);
+  const testUrl = 'https://maps.app.goo.gl/upsertlink456';
+
+  db.saveLinks([
+    { url: testUrl, reason: 'spam', targetCount: 5, doneCount: 0 }
+  ]);
+
+  // Update progress
+  db.updateLinkProgress(testUrl, { status: 'completed' });
+  assert.strictEqual(db.getLinks().find(l => l.url === testUrl).doneCount, 1);
+
+  // Subsequent save from UI
+  db.saveLinks([
+    { url: testUrl, reason: 'conflict', targetCount: 10 }
+  ]);
+
+  const updated = db.getLinks().find(l => l.url === testUrl);
+  assert.strictEqual(updated.reason, 'conflict', 'Reason should be updated');
+  assert.strictEqual(updated.targetCount, 10, 'Target count should be updated');
+  assert.strictEqual(updated.doneCount, 1, 'doneCount progress must be preserved');
+});
+
+test('db: respects MAPSSHIELD_USER_DATA environment path', () => {
+  const customUserData = path.join(__dirname, 'temp_test_user_data');
+  const customDbDir = path.join(customUserData, 'database');
+  const customDbPath = path.join(customDbDir, 'mapsshield.sqlite');
+
+  try {
+    process.env.MAPSSHIELD_USER_DATA = customUserData;
+    const db = new DatabaseService();
+    assert.strictEqual(db.dbPath, customDbPath);
+    assert.ok(fs.existsSync(customDbPath), 'Database file must be created inside MAPSSHIELD_USER_DATA/database');
+    db.close();
+  } finally {
+    delete process.env.MAPSSHIELD_USER_DATA;
+    try {
+      if (fs.existsSync(customUserData)) {
+        fs.rmSync(customUserData, { recursive: true, force: true });
+      }
+    } catch (_) {}
+  }
+});
+
+

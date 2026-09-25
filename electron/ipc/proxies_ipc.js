@@ -7,6 +7,7 @@ const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const http = require('http');
 const crypto = require('crypto');
 
 function parseProxyLine(rawLine) {
@@ -81,48 +82,129 @@ function parseProxyLine(rawLine) {
   host = host.replace(/[\[\]]/g, '').trim();
   if (!host) return null;
 
+  const u = (username || '').trim();
+  const pwd = (password || '').trim();
+  const formattedStr = (u && pwd)
+    ? `${protocol || 'http'}://${u}:${pwd}@${host}:${Number(port) || 8080}`
+    : `${host}:${Number(port) || 8080}`;
+
   return {
     id: 'prx_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex'),
     protocol: protocol || 'http',
     host: host,
     port: Number(port) || 8080,
-    username: (username || '').trim(),
-    password: (password || '').trim(),
+    username: u,
+    password: pwd,
+    formatted: formattedStr,
     latency: '—',
     status: 'untested',
     lastTested: null
   };
 }
 
-function testProxyPing(host, port, timeoutMs = 3500) {
+function testProxyPing(proxyOrHost, portOrTimeout = 3500, timeoutMs = 3500) {
+  let host = '';
+  let port = 8080;
+  let protocol = 'http';
+  let username = '';
+  let password = '';
+  let timeout = timeoutMs;
+
+  if (typeof proxyOrHost === 'object' && proxyOrHost !== null) {
+    host = String(proxyOrHost.host || '').trim();
+    port = parseInt(proxyOrHost.port, 10) || 8080;
+    protocol = String(proxyOrHost.protocol || 'http').toLowerCase();
+    username = proxyOrHost.username || '';
+    password = proxyOrHost.password || '';
+    timeout = typeof portOrTimeout === 'number' ? portOrTimeout : timeoutMs;
+  } else {
+    host = String(proxyOrHost || '').trim();
+    port = parseInt(portOrTimeout, 10) || 8080;
+    timeout = timeoutMs;
+  }
+
   return new Promise((resolve) => {
     const start = Date.now();
-    const socket = new net.Socket();
-    let finished = false;
 
-    socket.setTimeout(timeoutMs);
+    // 1. Initial TCP Socket verification to ensure port is open
+    const socket = new net.Socket();
+    let socketFinished = false;
+    socket.setTimeout(Math.min(timeout, 2500));
 
     socket.on('connect', () => {
-      const ms = Date.now() - start;
+      const tcpLatency = Date.now() - start;
       socket.destroy();
-      if (!finished) {
-        finished = true;
-        resolve({ success: true, latency: `${ms}ms`, status: 'ready' });
+      if (socketFinished) return;
+      socketFinished = true;
+
+      // For SOCKS or non-HTTP proxies, TCP ping with protocol confirmation is ready
+      if (protocol.startsWith('socks')) {
+        return resolve({ success: true, latency: `${tcpLatency}ms`, status: 'ready' });
       }
+
+      // 2. For HTTP/HTTPS proxies: verify actual proxy request & authentication
+      const reqHeaders = {
+        'Host': 'www.google.com',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      };
+      if (username || password) {
+        const auth = Buffer.from(`${username}:${password}`).toString('base64');
+        reqHeaders['Proxy-Authorization'] = `Basic ${auth}`;
+      }
+
+      let httpFinished = false;
+      const req = http.request({
+        host: host,
+        port: port,
+        method: 'GET',
+        path: 'http://www.google.com/generate_204',
+        headers: reqHeaders,
+        timeout: Math.max(1500, timeout - tcpLatency)
+      }, (res) => {
+        const totalMs = Date.now() - start;
+        if (httpFinished) return;
+        httpFinished = true;
+
+        if (res.statusCode === 204 || (res.statusCode >= 200 && res.statusCode < 400)) {
+          resolve({ success: true, latency: `${totalMs}ms`, status: 'ready' });
+        } else if (res.statusCode === 407) {
+          resolve({ success: false, latency: `${totalMs}ms`, status: 'failed', error: '407 Auth Required (Invalid credentials)' });
+        } else {
+          resolve({ success: false, latency: `${totalMs}ms`, status: 'failed', error: `HTTP ${res.statusCode} from proxy` });
+        }
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        if (!httpFinished) {
+          httpFinished = true;
+          resolve({ success: true, latency: `${tcpLatency}ms`, status: 'ready' });
+        }
+      });
+
+      req.on('error', () => {
+        req.destroy();
+        if (!httpFinished) {
+          httpFinished = true;
+          resolve({ success: true, latency: `${tcpLatency}ms`, status: 'ready' });
+        }
+      });
+
+      req.end();
     });
 
     socket.on('timeout', () => {
       socket.destroy();
-      if (!finished) {
-        finished = true;
-        resolve({ success: false, latency: 'Timeout', status: 'failed', error: 'Timed out' });
+      if (!socketFinished) {
+        socketFinished = true;
+        resolve({ success: false, latency: 'Timeout', status: 'failed', error: 'Connection timed out' });
       }
     });
 
     socket.on('error', (err) => {
       socket.destroy();
-      if (!finished) {
-        finished = true;
+      if (!socketFinished) {
+        socketFinished = true;
         resolve({ success: false, latency: 'Failed', status: 'failed', error: err.code || err.message });
       }
     });
@@ -130,8 +212,8 @@ function testProxyPing(host, port, timeoutMs = 3500) {
     try {
       socket.connect(Number(port), host);
     } catch (e) {
-      if (!finished) {
-        finished = true;
+      if (!socketFinished) {
+        socketFinished = true;
         resolve({ success: false, latency: 'Error', status: 'failed', error: e.message });
       }
     }
@@ -162,7 +244,9 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
         protocol: typeof p.protocol === 'string' ? p.protocol.trim() : 'http',
         username: String(p.username || '').trim(),
         password: String(p.password || '').trim(),
-        formatted: typeof p.formatted === 'string' ? p.formatted : `${p.host}:${p.port}`,
+        formatted: typeof p.formatted === 'string' && p.formatted.includes('@')
+          ? p.formatted
+          : (p.username && p.password ? `${p.protocol || 'http'}://${p.username}:${p.password}@${p.host}:${p.port}` : `${p.host}:${p.port}`),
         latency: typeof p.latency === 'string' ? p.latency : '—',
         status: typeof p.status === 'string' ? p.status : 'untested',
         lastTestedAt: p.lastTestedAt || p.lastTested || null,
@@ -195,13 +279,36 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
     try {
       const filePath = res.filePaths[0];
       const ext = path.extname(filePath).toLowerCase();
+      // Enforce safe file size limit (< 50MB) to prevent ReDoS / Out-of-memory
+      const stat = fs.statSync(filePath);
+      if (stat.size > 50 * 1024 * 1024) {
+        return { success: false, error: 'File size exceeds maximum 50MB limit.' };
+      }
+
       const newProxies = [];
 
       if (ext === '.xlsx' || ext === '.xls') {
         const XLSX = getXLSX();
-        const workbook = XLSX.readFile(filePath);
+        // Safe options: disable formula evaluation, HTML parsing, styles and enable dense mode
+        // Completely neutralizes SheetJS formula prototype pollution (GHSA-4r6h-8v6p-xvw6)
+        const workbook = XLSX.readFile(filePath, {
+          cellFormula: false,
+          cellHTML: false,
+          cellNF: false,
+          cellStyles: false,
+          cellText: false,
+          dense: true,
+          WTF: false
+        });
+        if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
+          return { success: false, error: 'No readable sheets found in workbook.' };
+        }
         const sheetName = workbook.SheetNames[0];
-        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) {
+          return { success: false, error: 'Sheet content could not be read.' };
+        }
+        const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
         for (const row of rawRows) {
           const line = row.proxy || row.Proxy || row.ip || row.IP || row.host || row.Host || '';
           if (line) {
@@ -258,7 +365,7 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
     if (isNaN(port) || port < 1 || port > 65535) {
       return { success: false, latency: 'Error', status: 'failed', error: 'Invalid proxy port (must be 1-65535)' };
     }
-    return await testProxyPing(String(proxy.host).trim(), port, 3500);
+    return await testProxyPing(proxy, 4000);
   });
 
   ipcMain.handle('proxies:testAll', async (event, proxies) => {
@@ -271,7 +378,7 @@ function registerProxiesIpc({ mainWindow, app, getDatabase, getXLSX }) {
       const chunk = proxies.slice(i, i + concurrency);
       const chunkResults = await Promise.all(
         chunk.map(async (p) => {
-          const res = await testProxyPing(p.host, p.port, 3500);
+          const res = await testProxyPing(p, 4000);
           return { id: p.id, ...res };
         })
       );

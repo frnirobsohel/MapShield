@@ -87,8 +87,9 @@ class BrowserManager {
       '--disable-domain-reliability',
       '--disable-sync',
       '--disable-breakpad',
-      '--disable-infobars',
       '--disable-blink-features=AutomationControlled',
+      '--disable-features=ChromeSigninBubble,SignInProfileCreationFlow',
+      '--no-service-autorun',
       '--log-level=3',
       '--disable-logging',
       '--silent-debugger-extension-api',
@@ -100,6 +101,14 @@ class BrowserManager {
       ...(options.userAgent ? [`--user-agent=${options.userAgent}`] : []),
       ...(Array.isArray(options.args) ? options.args : [])
     ];
+
+    // Dynamic 2Captcha Solver Extension Injection
+    const captchaExtPath = path.resolve(__dirname, '../../extensions/2captcha-solver');
+    if (fs.existsSync(captchaExtPath) && options.loadCaptchaExtension !== false) {
+      chromeArgs.push(`--disable-extensions-except=${captchaExtPath}`);
+      chromeArgs.push(`--load-extension=${captchaExtPath}`);
+      console.log(`🧩 [BrowserManager]: Auto-loaded 2Captcha extension from ${captchaExtPath}`);
+    }
 
     const browser = await puppeteer.launch({
       executablePath: browserPath,

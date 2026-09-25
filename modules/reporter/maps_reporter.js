@@ -14,9 +14,13 @@ const {
   humanScroll: defaultHumanScroll,
   humanWanderMouse: defaultHumanWanderMouse,
   smartClick: defaultSmartClick,
+  attachDialogAutoHandler,
   handleConsentIfPresent,
   captureProofScreenshot,
-  captureErrorScreenshot
+  captureErrorScreenshot,
+  waitForActionableElement,
+  detectPageAnomaly,
+  waitForPageOrTabTransition
 } = require('../helpers');
 
 const DEFAULT_MAPS_URL = 'https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7';
@@ -24,7 +28,7 @@ const DEFAULT_MAPS_URL = 'https://maps.app.goo.gl/S2ejSm9dnnCwAjoq7';
 // Mapping of violation reasons to Google Maps RAP reason codes and keywords matching the official Google dialog
 const REASON_CONFIGS = {
   offtopic: {
-    rCode: '3',
+    rCode: '1',
     keywords: ['off topic', 'off-topic', 'offtopic', "doesn't pertain to an experience", 'wrong business'],
     label: 'Off topic'
   },
@@ -34,7 +38,7 @@ const REASON_CONFIGS = {
     label: 'Spam'
   },
   conflict: {
-    rCode: '1',
+    rCode: '3',
     keywords: ['conflict of interest', 'affiliated with the business', "competitor's business", 'competitor'],
     label: 'Conflict of interest'
   },
@@ -44,17 +48,17 @@ const REASON_CONFIGS = {
     label: 'Profanity'
   },
   harmful: {
-    rCode: '7',
+    rCode: '5',
     keywords: ['harmful', 'self-harm', 'dangerous items', 'graphic violence', 'violence to people or animals'],
     label: 'Harmful'
   },
   bullying: {
-    rCode: '5',
+    rCode: '6',
     keywords: ['bullying or harassment', 'bullying', 'harassment', 'personally attacks a specific individual', 'personal attack'],
     label: 'Bullying or harassment'
   },
   discrimination: {
-    rCode: '6',
+    rCode: '7',
     keywords: ['discrimination or hate speech', 'discrimination', 'hate speech', 'harmful language about an individual or group based on identity'],
     label: 'Discrimination or hate speech'
   },
@@ -64,7 +68,7 @@ const REASON_CONFIGS = {
     label: 'Personal information'
   },
   not_helpful: {
-    rCode: '9',
+    rCode: '12',
     keywords: ['not helpful', "doesn't help people decide whether to go to this place", 'decide whether to go'],
     label: 'Not helpful'
   }
@@ -87,11 +91,10 @@ async function executeLegalNoticeFlow({
   senderInfo,
   cursor,
   smartClick,
-  sleep = defaultSleep
+  sleep = defaultSleep,
+  captchaApiKey
 }) {
-  console.log('\n===========================================================');
-  console.log('⚖️ [Legal Notice] Initiating AI Legal Complaint & Document...');
-  console.log('===========================================================');
+  console.log('[Legal Notice] Generating formal removal complaint...');
 
   const apiKey = aiOptions?.aiApiKey || process.env.AI_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY;
   const provider = aiOptions?.aiProvider || process.env.AI_PROVIDER || 'gemini';
@@ -125,12 +128,14 @@ async function executeLegalNoticeFlow({
     senderInfo,
     sleep,
     smartClick: smartClick || defaultSmartClick,
-    cursor
+    cursor,
+    captchaApiKey
   });
 
   return {
     ...legalNotice,
-    legalResult
+    legalResult,
+    success: !!(legalResult && legalResult.success !== false)
   };
 }
 
@@ -160,7 +165,8 @@ async function runMapsReporter({
   reportType = 'standard',
   reportReason = 'spam',
   aiOptions = {},
-  senderInfo = {}
+  senderInfo = {},
+  captchaApiKey
 }) {
   sleep = sleep || defaultSleep;
   humanScroll = humanScroll || defaultHumanScroll;
@@ -169,13 +175,12 @@ async function runMapsReporter({
 
   const targetUrl = reviewUrl || DEFAULT_MAPS_URL;
 
-  console.log('\n===============================================================');
-  console.log('       📍 GOOGLE MAPS AUTO FAKE REVIEW REPORTER               ');
-  console.log('  (Automated 3-Dots Detection & "Report review" Clicker)       ');
-  console.log('===============================================================\n');
+  // Auto-accept any browser dialogs (such as "Leave site?" when transitioning from Gmail)
+  if (attachDialogAutoHandler) {
+    attachDialogAutoHandler(page);
+  }
 
-  console.log('🌐 Opening target Google Maps review link:');
-  console.log(`🔗 ${targetUrl}`);
+  console.log(`\n[Maps Reporter] Target URL: ${targetUrl}`);
 
   // Navigate to Google Maps review link
   await page.goto(targetUrl, {
@@ -183,14 +188,49 @@ async function runMapsReporter({
     timeout: 60000
   });
 
-  console.log('⏳ Waiting for Google Maps review section to load...');
-  await sleep(2500);
+  console.log('⏳ Synchronizing with Google Maps review page...');
+  const initialAnomaly = await detectPageAnomaly(page);
+  if (initialAnomaly.hasAnomaly || initialAnomaly.isAnomaly) {
+    console.error(`🚨 Browser Anomaly Detected: ${initialAnomaly.message}`);
+    if (initialAnomaly.type === 'CAPTCHA') {
+      try {
+        const { handlePageCaptcha } = require('../captcha/captcha_solver');
+        console.log('🧩 [Maps Reporter]: Detected CAPTCHA anomaly. Invoking Auto-Solver...');
+        await handlePageCaptcha(page, { apiKey: captchaApiKey });
+      } catch (_) {}
+    }
+  }
 
   // Handle cookie consent or 'Before you continue to Google' dialogs
   try {
     await handleConsentIfPresent(page);
   } catch (e) {}
-  await sleep(1500);
+
+  // Await review card or container anchor readiness
+  const reviewAnchorSelectors = [
+    'div[data-review-id]',
+    'div.jftiEf',
+    'div.m6QErb',
+    'div.fontBodyMedium',
+    'div[role="main"]',
+    'button[aria-label*="Actions for" i]',
+    'button[aria-label*="options" i]'
+  ].join(', ');
+
+  const reviewLoaded = await waitForActionableElement(page, reviewAnchorSelectors, {
+    timeout: 30000,
+    visible: true,
+    description: 'Review container anchor'
+  });
+
+  if (!reviewLoaded) {
+    const anomaly = await detectPageAnomaly(page);
+    if (anomaly.hasAnomaly || anomaly.isAnomaly) {
+      console.error(`🚨 Browser Anomaly Detected while loading review: ${anomaly.message}`);
+    } else {
+      console.warn('⚠️ Review container anchor did not settle within 30s. Continuing best-effort...');
+    }
+  }
 
   if (humanScroll) {
     console.log('📜 Scrolling review content into view...');
@@ -258,169 +298,212 @@ async function runMapsReporter({
     }
   }
 
-  // If report mode is purely legal, bypass standard 3-dots report and file directly
-  if (activeType === 'legal' || activeReason === 'legal') {
-    console.log('\n===========================================================');
-    console.log('⚖️ [Legal Notice Mode] Direct Legal Removal Notice Flow');
-    console.log('===========================================================');
-
-    const legalResult = await executeLegalNoticeFlow({
-      page,
-      browser: typeof page?.browser === 'function' ? page.browser() : undefined,
-      reportPage: page,
-      reviewUrl: targetUrl,
-      details,
-      aiOptions,
-      senderInfo,
-      cursor,
-      smartClick,
-      sleep
-    });
-
-    console.log('\n===========================================================');
-    console.log('✅ Google Legal Removal Notice process completed!');
-    console.log('===========================================================');
-    return legalResult;
-  }
-
   // --------------------------------------------------------------------------
-  // [Step 1] 3-Dots Button Detection & Click
+  // [Step 1] 3-Dots Button Detection & Click (Review-Scoped)
   // --------------------------------------------------------------------------
-  console.log('\n[Step 1] 🔍 Searching for 3-Dots (More Options) button...');
-
-  let threeDotsFound = false;
+  console.log('🔍 Locating 3-dots menu button...');
 
   const dotsSelectors = [
-    'button[aria-label*="Action"]',
-    'button[aria-label*="action"]',
+    'button[aria-label*="Actions for"]',
     'button[aria-label*="actions for"]',
+    'button[data-tooltip*="Actions for"]',
+    'button[aria-label*="More actions"]',
+    'button[aria-label*="more actions"]',
     'button[aria-label*="More options"]',
     'button[aria-label*="more options"]',
-    'button[data-tooltip*="options"]',
-    'button[data-tooltip*="More"]',
+    'button[aria-label*="Options"]',
+    'button[aria-label*="options"]',
     'button[aria-haspopup="menu"]',
     'button.al6KDe'
   ];
 
-  for (const sel of dotsSelectors) {
-    const btn = await page.$(sel).catch(() => null);
-    if (btn) {
-      const isVisible = await btn.isIntersectingViewport().catch(() => true);
-      if (isVisible) {
-        console.log(`👉 3-Dots button found (${sel}). Clicking...`);
-        if (smartClick) {
-          await smartClick(btn);
-        } else {
-          await btn.click();
-        }
-        threeDotsFound = true;
-        break;
+  const dotsFinder = async (p) => {
+    // 0. Dismiss any lingering Share dialog if present
+    await p.evaluate(() => {
+      const shareDialog = document.querySelector('div[role="dialog"][aria-label*="Share" i], div.widget-pane-share-dialog');
+      if (shareDialog) {
+        const closeBtn = shareDialog.querySelector('button[aria-label*="Close" i], button[jsaction*="close"]');
+        if (closeBtn) closeBtn.click();
+      }
+    }).catch(() => {});
+
+    // 1. Selector search (strictly excluding Share buttons)
+    for (const sel of dotsSelectors) {
+      const btns = await p.$$(sel).catch(() => []);
+      for (const btn of btns) {
+        const isShare = await p.evaluate(el => {
+          const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+          const tooltip = (el.getAttribute('data-tooltip') || '').toLowerCase();
+          return aria.includes('share') || tooltip.includes('share');
+        }, btn).catch(() => false);
+        if (!isShare) return btn;
       }
     }
-  }
-
-  // Fallback: evaluate search for 3-dots button
-  if (!threeDotsFound) {
-    threeDotsFound = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-      const dotsBtn = buttons.find(b => {
+    // 2. Review container scoped search
+    const scopedHandle = await p.evaluateHandle(() => {
+      const reviewContainers = Array.from(document.querySelectorAll('[data-review-id], div.jftiEf, div.m6QErb div[role="region"], div.GKa6Le, div.fontBodyMedium'));
+      for (const container of reviewContainers) {
+        const dotsInContainer = Array.from(container.querySelectorAll('button, div[role="button"]')).find(b => {
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          const tooltip = (b.getAttribute('data-tooltip') || '').toLowerCase();
+          if (aria.includes('share') || tooltip.includes('share')) return false;
+          const hasMenu = b.getAttribute('aria-haspopup') === 'menu';
+          return (
+            aria.includes('action') ||
+            aria.includes('option') ||
+            tooltip.includes('action') ||
+            tooltip.includes('option') ||
+            hasMenu
+          );
+        });
+        if (dotsInContainer) return dotsInContainer;
+      }
+      // 3. Global DOM search
+      const buttons = Array.from(document.querySelectorAll('button, div[role="button"], [role="button"]'));
+      return buttons.find(b => {
         const aria = (b.getAttribute('aria-label') || '').toLowerCase();
         const tooltip = (b.getAttribute('data-tooltip') || '').toLowerCase();
+        if (aria.includes('share') || tooltip.includes('share')) return false;
+        const hasMenu = b.getAttribute('aria-haspopup') === 'menu';
+        const inner = (b.innerHTML || '').toLowerCase();
+        const isMoreVert = inner.includes('more_vert') || inner.includes('m12 8c1.1');
         return (
           aria.includes('action') ||
           aria.includes('more option') ||
+          aria.includes('option') ||
           tooltip.includes('option') ||
           tooltip.includes('more') ||
-          b.getAttribute('aria-haspopup') === 'menu'
+          hasMenu ||
+          isMoreVert
         );
-      });
-      if (dotsBtn) {
-        dotsBtn.scrollIntoView({ block: 'center' });
-        dotsBtn.click();
-        return true;
-      }
-      return false;
-    }).catch(() => false);
-  }
+      }) || null;
+    }).catch(() => null);
 
-  if (!threeDotsFound) {
+    return scopedHandle ? scopedHandle.asElement() : null;
+  };
+
+  const dotsBtn = await waitForActionableElement(page, dotsFinder, {
+    timeout: 20000,
+    visible: true,
+    description: '3-Dots Options Menu button'
+  });
+
+  if (!dotsBtn) {
     console.error('❌ Failed to locate 3-Dots button on review. Saving diagnostic screenshot to report_logs/errors/');
     await captureErrorScreenshot(page, 'maps_dots_error');
     throw new Error(`Failed to locate 3-Dots (More Options) button on review page: ${targetUrl}`);
   }
 
+  console.log('[Step 1] 3-dots button is actionable. Clicking...');
+  if (smartClick) {
+    await smartClick(dotsBtn);
+  } else {
+    await dotsBtn.click();
+  }
   console.log('✅ 3-Dots button clicked successfully.');
-  await sleep(2500);
+  await sleep(1200);
 
   // --------------------------------------------------------------------------
   // [Step 2 & 3] Click "Report review" from Menu
   // --------------------------------------------------------------------------
-  console.log('\n[Step 2] 🔍 Searching for "Report review" option in dropdown menu...');
+  console.log('🔍 Locating "Report review" menu item (strictly excluding Share review)...');
 
-  let reportClicked = false;
+  const reportItemFinder = async (p) => {
+    const handle = await p.evaluateHandle(() => {
+      // 1. Direct query on distinct menu items (never container role="menu")
+      const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="menuitemradio"], .nbpdpb, li[role="menuitem"]'));
+      for (const item of items) {
+        // Exclude containers wrapping multiple menu items
+        if (item.querySelectorAll('[role="menuitem"]').length > 1) continue;
+        if (item.getAttribute('role') === 'menu') continue;
 
-  const menuItems = await page.$$('div[role="menuitem"], [role="menuitem"], .gU3Bcb, .nbpdpb, div[jsaction*="click"]').catch(() => []);
-  for (const item of menuItems) {
-    const text = (await page.evaluate(el => el.innerText || el.textContent || '', item)).toLowerCase().trim();
-    if (
-      text.includes('report review') ||
-      text.includes('report') ||
-      text.includes('flag as inappropriate')
-    ) {
-      console.log(`👉 Menu item "${text}" found! Clicking...`);
-      if (smartClick) {
-        await smartClick(item);
-      } else {
-        await item.click();
+        const text = (item.innerText || item.textContent || '').trim().toLowerCase();
+        const aria = (item.getAttribute('aria-label') || '').toLowerCase();
+
+        const isShare = text.includes('share') || aria.includes('share');
+        if (isShare) continue;
+
+        const isReport = text === 'report review' ||
+                         text === 'report' ||
+                         text === 'flag as inappropriate' ||
+                         text.includes('report review') ||
+                         text.includes('flag as inappropriate') ||
+                         aria.includes('report review') ||
+                         aria.includes('flag as inappropriate');
+
+        if (isReport) {
+          return item;
+        }
       }
-      reportClicked = true;
-      break;
-    }
-  }
 
-  // Fallback evaluate search for Report text
-  if (!reportClicked) {
-    const evaluateResult = await page.evaluate(() => {
-      const candidates = Array.from(document.querySelectorAll('button, a, span, div[role="menuitem"], div[role="button"], li, [role="menuitemradio"], [data-index], [jsaction]'));
-      
-      const reportEl = candidates.find(el => {
-        const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-        return (
-          t === 'report review' ||
-          t === 'report' ||
-          t === 'flag as inappropriate'
-        ) && el.children.length === 0;
-      }) || candidates.find(el => {
-        const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-        return (
-          t.includes('report review') ||
-          t.includes('flag as inappropriate')
-        ) && el.children.length < 3;
-      });
+      // 2. Leaf element search inside open menu
+      const allLeaves = Array.from(document.querySelectorAll('[role="menu"] *, div.action-menu *, .fxKbKc *, [role="menuitem"] *'));
+      for (const leaf of allLeaves) {
+        if (leaf.children.length > 0) continue;
+        const text = (leaf.innerText || leaf.textContent || '').trim().toLowerCase();
+        const aria = (leaf.getAttribute('aria-label') || '').toLowerCase();
 
-      if (reportEl) {
-        reportEl.scrollIntoView({ block: 'center' });
-        reportEl.click();
-        if (reportEl.parentElement) reportEl.parentElement.click();
-        return (reportEl.innerText || reportEl.textContent || 'Report Option Clicked').trim();
+        if (text.includes('share') || aria.includes('share')) continue;
+
+        if (text === 'report review' || text === 'report' || text === 'flag as inappropriate' ||
+            aria === 'report review' || aria === 'flag as inappropriate') {
+          return leaf.closest('[role="menuitem"], .nbpdpb, [role="button"]') || leaf;
+        }
       }
+
+      // 3. Fallback: text search strictly rejecting anything with "share"
+      const fallbacks = Array.from(document.querySelectorAll('div, span, button, a'));
+      for (const el of fallbacks) {
+        if (el.getAttribute('role') === 'menu') continue;
+        if (el.querySelectorAll('[role="menuitem"]').length > 1) continue;
+
+        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+
+        if (text.includes('share') || aria.includes('share')) continue;
+
+        if (text === 'report review' || aria === 'report review' ||
+            text === 'flag as inappropriate' || aria === 'flag as inappropriate') {
+          return el.closest('[role="menuitem"], .nbpdpb, [role="button"]') || el;
+        }
+      }
+
       return null;
-    });
+    }).catch(() => null);
 
-    if (evaluateResult) {
-      console.log(`✅ "Report review" clicked successfully: "${evaluateResult}"`);
-      reportClicked = true;
-    }
-  }
+    return handle ? handle.asElement() : null;
+  };
 
-  if (!reportClicked) {
+  const reportMenuItem = await waitForActionableElement(page, reportItemFinder, {
+    timeout: 15000,
+    visible: true,
+    description: '"Report review" menu item'
+  });
+
+  if (!reportMenuItem) {
     console.error('❌ Failed to click "Report review" option. Saving diagnostic screenshot to report_logs/errors/');
     await captureErrorScreenshot(page, 'maps_report_click_error');
     throw new Error('Failed to click "Report review" option from 3-dots dropdown menu');
   }
 
-  console.log('\n🎉 [Success] "Report review" clicked successfully from 3-dots menu!');
-  console.log('⏳ Detecting report page / window...');
+  // Ensure element is scrolled into view
+  await page.evaluate(el => {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, reportMenuItem).catch(() => {});
+  await sleep(400);
+
+  console.log('[Step 2] "Report review" menu item is actionable. Clicking...');
+  if (smartClick) {
+    await smartClick(reportMenuItem);
+  } else {
+    await reportMenuItem.click();
+  }
+  // Secondary native click dispatch to guarantee event trigger
+  await page.evaluate(el => {
+    if (el && typeof el.click === 'function') el.click();
+  }, reportMenuItem).catch(() => {});
+
+  console.log('[Step 3] "Report review" clicked. Awaiting report dialog / tab...');
 
   // --------------------------------------------------------------------------
   // [Step 4] Dynamic Tab & Dialog Resolution Engine
@@ -429,199 +512,337 @@ async function runMapsReporter({
   let reportCursor = cursor;
   const browser = page.browser();
 
-  const waitStart = Date.now();
-  let foundReportTab = false;
-
-  while (Date.now() - waitStart < 8000) {
-    await sleep(1000);
-    const allPages = await browser.pages().catch(() => []);
-    
-    const newTab = allPages.find(p => {
+  console.log('🔍 Synchronizing with report dialog or tab...');
+  const reportTargetPatterns = [
+    '/rap/report',
+    '/content/rap',
+    '/report?',
+    '/local/content/rap',
+    p => {
       const u = p.url();
-      return u.includes('/rap/report') || u.includes('/content/rap') || u.includes('/report?') || u.includes('/local/content/rap');
+      return u.includes('report') || u.includes('rap');
+    }
+  ];
+
+  const transitionedReportPage = await waitForPageOrTabTransition(browser, page, reportTargetPatterns, {
+    timeout: 15000,
+    actionName: 'Report Dialog / Tab'
+  });
+
+  if (transitionedReportPage) {
+    reportPage = transitionedReportPage;
+    if (attachDialogAutoHandler) {
+      attachDialogAutoHandler(reportPage);
+    }
+    await reportPage.bringToFront().catch(() => {});
+    reportCursor = createCursor(reportPage);
+    console.log(`🎯 Report page detected in tab and focused: ${reportPage.url()}`);
+  } else {
+    // If no new tab opened, check if an in-page modal dialog appeared on current page
+    const dialogModal = await waitForActionableElement(page, 'div[role="dialog"], [aria-modal="true"], iframe[src*="rap"], iframe[src*="report"]', {
+      timeout: 6000,
+      description: 'In-page report modal dialog'
     });
-
-    if (newTab) {
-      reportPage = newTab;
-      foundReportTab = true;
-      console.log(`🎯 Report page detected in new tab and focused:`);
-      console.log(`🔗 ${reportPage.url()}`);
-      await reportPage.bringToFront();
-      reportCursor = createCursor(reportPage);
-      break;
-    }
-  }
-
-  if (!foundReportTab) {
-    const isCurrentReport = reportPage.url().includes('report') || reportPage.url().includes('rap');
-    if (isCurrentReport) {
-      console.log('🎯 Report form loaded on current page.');
+    if (dialogModal) {
+      console.log('🎯 Report modal dialog detected and actionable on current page.');
     } else {
-      console.log('⏳ Waiting for dialog or iframe...');
+      console.log('ℹ️ Proceeding with active page for report form.');
     }
   }
 
-  await sleep(2500);
+  const reportAnomaly = await detectPageAnomaly(reportPage);
+  if (reportAnomaly.hasAnomaly || reportAnomaly.isAnomaly) {
+    console.error(`🚨 Browser Anomaly Detected on Report Page: ${reportAnomaly.message}`);
+    if (reportAnomaly.type === 'CAPTCHA') {
+      try {
+        const { handlePageCaptcha } = require('../captcha/captcha_solver');
+        console.log('🧩 [Maps Reporter]: Detected CAPTCHA on report page. Invoking Auto-Solver...');
+        await handlePageCaptcha(reportPage, { apiKey: captchaApiKey });
+      } catch (_) {}
+    }
+  }
 
   // --------------------------------------------------------------------------
   // [Step 5] Report Action: Legal Notice vs Standard Category
   // --------------------------------------------------------------------------
-  // Standard Option Detection & Selection (legal mode already returned earlier at line 262)
-  const reasonCfg = REASON_CONFIGS[activeReason] || REASON_CONFIGS.spam;
-  console.log(`\n[Step 5] 🎯 Detecting and selecting "${reasonCfg.label}" option...`);
+  if (activeType === 'legal' || activeReason === 'legal') {
+    console.log('[Step 5] Initiating Legal Notice submission...');
 
-  let reasonClicked = false;
-
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    reasonClicked = await reportPage.evaluate((cfg) => {
-      const all = Array.from(document.querySelectorAll('*'));
-
-      // Method 1: Look specifically for link with r=<code>
-      const rCode = cfg.rCode;
-      const rLink = document.querySelector(`a[href*="r=${rCode}"], [data-value*="${rCode}"], [data-reason="${rCode}"]`);
-      if (rLink) {
-        rLink.scrollIntoView({ block: 'center' });
-        rLink.click();
+    // If reportPage has a direct link to legal issues, click it to transfer review context
+    const legalLinkFound = await reportPage.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"]'));
+      const target = links.find(el => {
+        const h = (el.getAttribute('href') || '').toLowerCase();
+        const t = (el.innerText || el.textContent || '').toLowerCase().trim();
+        return (
+          h.includes('troubleshooter') ||
+          h.includes('/legal') ||
+          t.includes('legal issue') ||
+          t.includes('legal')
+        );
+      });
+      if (target) {
+        target.scrollIntoView({ block: 'center' });
+        target.click();
         return true;
       }
+      return false;
+    }).catch(() => false);
 
-      // Method 2: Match leaf text element for keywords
+    if (legalLinkFound) {
+      console.log('[Step 5] Clicked legal removal link from report dialog.');
+      await sleep(3000);
+    }
+
+    const legalResult = await executeLegalNoticeFlow({
+      page,
+      browser,
+      reportPage,
+      reviewUrl: targetUrl,
+      details,
+      aiOptions,
+      senderInfo,
+      cursor: reportCursor || cursor,
+      smartClick,
+      sleep,
+      captchaApiKey
+    });
+
+    console.log('[Legal Notice] Completed.');
+    return legalResult;
+  }
+
+  // Standard Option Detection & Selection
+  const reasonCfg = REASON_CONFIGS[activeReason] || REASON_CONFIGS.spam;
+  console.log(`\n🔍 Synchronizing with "${reasonCfg.label}" violation option...`);
+
+  const reasonFinder = async (p) => {
+    // 1. Check in page DOM
+    const handle = await p.evaluateHandle((cfg) => {
+      const rCode = cfg.rCode;
+
+      // Primary A: Direct RAP submit link matching exact r parameter
+      const rLinks = Array.from(document.querySelectorAll('a[href*="report/submit"], a[href*="/rap/report"], [data-value], [data-reason]'));
+      const exactRLink = rLinks.find(a => {
+        const href = a.getAttribute('href') || '';
+        const dataVal = a.getAttribute('data-value') || '';
+        const dataReason = a.getAttribute('data-reason') || '';
+        return (
+          new RegExp(`[?&]r=${rCode}(?:&|$)`).test(href) ||
+          dataVal === rCode ||
+          dataReason === rCode
+        );
+      });
+      if (exactRLink) return exactRLink;
+
+      // Primary B: Check by exact category title in .um5FIe or .dsrmTc (Google RAP design)
+      const titleEls = Array.from(document.querySelectorAll('.um5FIe, .dsrmTc, .w51cd, [role="link"], li a'));
+      for (const el of titleEls) {
+        const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+        if (cfg.keywords.some(kw => t === kw || t.startsWith(kw + '\n') || t === kw.replace('-', ' '))) {
+          return el.closest('a') || el;
+        }
+      }
+
+      // Primary C: Check leaf nodes
+      const all = Array.from(document.querySelectorAll('*'));
       const reasonEl = all.find(el => {
         const t = (el.innerText || el.textContent || '').toLowerCase().trim();
         return cfg.keywords.some(kw => t === kw || t.startsWith(kw + '\n') || t === kw.replace('-', ' ')) &&
           el.children.length === 0;
       });
-
       if (reasonEl) {
-        const clickable = reasonEl.closest('a, button, [role="button"], [role="radio"], [role="listitem"], li, div[tabindex]') || reasonEl.parentElement;
-        if (clickable) {
-          clickable.scrollIntoView({ block: 'center' });
-          clickable.click();
-          const innerLink = clickable.querySelector('a, button');
-          if (innerLink && innerLink !== clickable) innerLink.click();
-          return true;
-        }
-        reasonEl.click();
-        return true;
+        return reasonEl.closest('a, button, [role="button"], [role="radio"], [role="listitem"], li, div[tabindex]') || reasonEl;
       }
 
-      // Method 3: Fallback search for radio buttons or labels
+      // Primary D: Check radio or button with aria-label
       const radioOrLabel = all.find(el => {
         const t = (el.innerText || el.textContent || '').toLowerCase();
         const aria = (el.getAttribute('aria-label') || '').toLowerCase();
         return cfg.keywords.some(kw => t.includes(kw) || aria.includes(kw)) &&
           (el.tagName === 'LABEL' || el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'button');
       });
+      return radioOrLabel || null;
+    }, reasonCfg).catch(() => null);
 
-      if (radioOrLabel) {
-        radioOrLabel.scrollIntoView({ block: 'center' });
-        radioOrLabel.click();
-        const input = radioOrLabel.querySelector('input');
-        if (input) input.click();
-        return true;
-      }
+    if (handle && handle.asElement()) return handle.asElement();
 
-      return false;
-    }, reasonCfg).catch(() => false);
-
-    if (reasonClicked) {
-      console.log(`✅ "${reasonCfg.label}" option selected successfully!`);
-      break;
-    }
-
-    await sleep(1500);
-  }
-
-  if (!reasonClicked) {
-    // Also check any embedded iframes if reason was not found in main document
-    const frames = reportPage.frames();
-    for (const frame of frames) {
+    // 2. Check frames
+    for (const frame of p.frames()) {
       try {
-        reasonClicked = await frame.evaluate((cfg) => {
-          const rLink = document.querySelector(`a[href*="r=${cfg.rCode}"], [data-value*="${cfg.rCode}"], [data-reason="${cfg.rCode}"]`);
-          if (rLink) { rLink.scrollIntoView({ block: 'center' }); rLink.click(); return true; }
+        const fHandle = await frame.evaluateHandle((cfg) => {
+          const rLinks = Array.from(document.querySelectorAll('a[href*="report/submit"], a[href*="/rap/report"], [data-value], [data-reason]'));
+          const exactRLink = rLinks.find(a => {
+            const href = a.getAttribute('href') || '';
+            return new RegExp(`[?&]r=${cfg.rCode}(?:&|$)`).test(href);
+          });
+          if (exactRLink) return exactRLink;
+
+          const titleEls = Array.from(document.querySelectorAll('.um5FIe, .dsrmTc, .w51cd, [role="link"], li a'));
+          for (const el of titleEls) {
+            const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+            if (cfg.keywords.some(kw => t === kw || t.startsWith(kw + '\n') || t === kw.replace('-', ' '))) {
+              return el.closest('a') || el;
+            }
+          }
+
           const all = Array.from(document.querySelectorAll('*'));
           const el = all.find(e => {
             const t = (e.innerText || e.textContent || '').toLowerCase().trim();
             return cfg.keywords.some(kw => t === kw || t.startsWith(kw + '\n')) && e.children.length === 0;
           });
-          if (el) { el.click(); return true; }
-          return false;
-        }, reasonCfg).catch(() => false);
-        if (reasonClicked) {
-          console.log(`✅ "${reasonCfg.label}" option selected successfully inside iframe!`);
-          break;
-        }
+          return el ? (el.closest('a') || el) : null;
+        }, reasonCfg).catch(() => null);
+        if (fHandle && fHandle.asElement()) return fHandle.asElement();
       } catch (e) {}
     }
-  }
+    return null;
+  };
 
-  if (!reasonClicked) {
-    console.warn(`⚠️ Could not directly select "${reasonCfg.label}" option. Saving diagnostic screenshot to report_logs/errors/`);
+  const reasonElement = await waitForActionableElement(reportPage, reasonFinder, {
+    timeout: 20000,
+    visible: true,
+    description: `Violation reason "${reasonCfg.label}"`
+  });
+
+  if (!reasonElement) {
+    console.warn(`⚠️ Could not locate actionable "${reasonCfg.label}" option. Saving diagnostic screenshot to report_logs/errors/`);
     await captureErrorScreenshot(reportPage, 'maps_reason_error');
     throw new Error(`Could not locate or select violation reason "${reasonCfg.label}" in Google report dialog`);
   }
 
+  // Ensure element is visible and centered in viewport before interaction
+  await reportPage.evaluate((el) => {
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    }
+  }, reasonElement).catch(() => {});
+  await sleep(400);
+
+  console.log(`[Step 5] "${reasonCfg.label}" option is actionable. Selecting...`);
+  let clicked = false;
+  if (smartClick) {
+    try {
+      await smartClick(reasonElement);
+      clicked = true;
+    } catch (_) {}
+  }
+  if (!clicked) {
+    try {
+      await reasonElement.click();
+      clicked = true;
+    } catch (_) {}
+  }
+
+  // Native DOM dispatch & fallback trigger for Google RAP direct submit links
+  await reportPage.evaluate((el) => {
+    if (el) {
+      if (typeof el.click === 'function') el.click();
+      const href = el.getAttribute('href') || (el.closest('a') ? el.closest('a').getAttribute('href') : null);
+      if (href && href.includes('report/submit')) {
+        setTimeout(() => {
+          if (!window.location.href.includes('/submit') && !window.location.href.includes('/confirmation')) {
+            window.location.href = href;
+          }
+        }, 800);
+      }
+    }
+  }, reasonElement).catch(() => {});
+  console.log(`✅ "${reasonCfg.label}" option selected successfully!`);
+
   // --------------------------------------------------------------------------
   // [Step 6] Navigate to Submit Page & Click Submit Button
   // --------------------------------------------------------------------------
-  console.log('\n[Step 6] ⏳ Waiting for submit page to load...');
-  await sleep(3000);
-
-  // Intermediate "Next" button in certain regional flows
-  await reportPage.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-    const nextBtn = buttons.find(btn => {
-      const t = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-      return t === 'next' && !btn.disabled;
-    });
-    if (nextBtn) {
-      nextBtn.scrollIntoView({ block: 'center' });
-      nextBtn.click();
-      return true;
-    }
-    return false;
-  }).catch(() => false);
-
-  await sleep(2000);
-
-  console.log('👉 Attempting to click Submit / Report button...');
+  console.log('\n🔍 Synchronizing with Submit / Report page...');
+  await sleep(1500);
 
   let submitted = false;
 
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    submitted = await reportPage.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, div[role="button"], input[type="submit"], a[role="button"]'));
-      
-      const submitBtn = buttons.find(btn => {
-        const t = (btn.innerText || btn.textContent || btn.value || '').trim().toLowerCase();
-        const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
-        return (
-          t === 'submit' ||
-          t === 'report' ||
-          t === 'send'
-        ) && !isDisabled;
-      });
+  // 1. Check if already confirmed
+  const alreadyConfirmed = await reportPage.evaluate(() => {
+    const text = (document.body.innerText || '').toLowerCase();
+    return window.location.href.includes('/confirmation') ||
+      text.includes('thank you for reporting') ||
+      text.includes('thanks for reporting') ||
+      text.includes('report received');
+  }).catch(() => false);
 
-      if (submitBtn) {
-        submitBtn.scrollIntoView({ block: 'center' });
-        submitBtn.click();
-        return true;
-      }
-      return false;
-    }).catch(() => false);
+  if (alreadyConfirmed) {
+    console.log('⚡ Direct submission confirmed!');
+    submitted = true;
+  } else {
+    // 2. Intermediate "Next" button in certain regional flows
+    const nextBtn = await reportPage.evaluateHandle(() => {
+      const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+      return buttons.find(btn => {
+        const t = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+        return t === 'next' && !btn.disabled;
+      }) || null;
+    }).catch(() => null);
 
-    if (submitted) {
-      console.log('🎉 "Submit" button clicked successfully!');
-      break;
+    if (nextBtn && nextBtn.asElement()) {
+      console.log('👉 Clicking intermediate "Next" button...');
+      await nextBtn.asElement().click();
+      await sleep(1500);
     }
 
-    await sleep(1500);
-  }
+    console.log('👉 Attempting to click Submit / Report button...');
 
-  if (!submitted) {
-    console.warn('⚠️ Submit button was not automatically found. Saving diagnostic screenshot to report_logs/errors/');
-    await captureErrorScreenshot(reportPage, 'maps_submit_btn_error').catch(() => {});
+    for (let attempt = 1; attempt <= 8; attempt++) {
+      submitted = await reportPage.evaluate(() => {
+        // Direct exact match for Google RAP Submit button (button[jsname="haV7P"] or .mhBSmf button)
+        const rapBtn = document.querySelector('button[jsname="haV7P"], .mhBSmf button');
+        if (rapBtn) {
+          rapBtn.scrollIntoView({ block: 'center' });
+          rapBtn.click();
+          return true;
+        }
+
+        // Match by span with text "Submit" or "Report"
+        const spanSubmits = Array.from(document.querySelectorAll('span.VfPpkd-vQzf8d, span[jsname="V67aGc"]'));
+        for (const span of spanSubmits) {
+          const t = (span.innerText || span.textContent || '').trim().toLowerCase();
+          if (t === 'submit' || t === 'report') {
+            const btn = span.closest('button, [role="button"]') || span;
+            btn.scrollIntoView({ block: 'center' });
+            btn.click();
+            return true;
+          }
+        }
+
+        // Generic fallback for submit/report/send buttons
+        const buttons = Array.from(document.querySelectorAll('button, div[role="button"], input[type="submit"], a[role="button"]'));
+        const submitBtn = buttons.find(btn => {
+          const t = (btn.innerText || btn.textContent || btn.value || '').trim().toLowerCase();
+          const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+          return (
+            t === 'submit' ||
+            t === 'report' ||
+            t === 'send'
+          ) && !isDisabled;
+        });
+
+        if (submitBtn) {
+          submitBtn.scrollIntoView({ block: 'center' });
+          submitBtn.click();
+          return true;
+        }
+
+        return false;
+      }).catch(() => false);
+
+      if (submitted) {
+        console.log('🎉 "Submit" button clicked successfully!');
+        break;
+      }
+
+      await sleep(1000);
+    }
+
+    if (!submitted) {
+      console.warn('⚠️ Submit button was not automatically found. Saving diagnostic screenshot to report_logs/errors/');
+      await captureErrorScreenshot(reportPage, 'maps_submit_btn_error').catch(() => {});
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -676,27 +897,24 @@ async function runMapsReporter({
   // --------------------------------------------------------------------------
   // [Step 8] Dual Mode: Post-Report Legal Notice Submission
   // --------------------------------------------------------------------------
-  if (shouldExecuteLegalNotice && activeType !== 'legal') {
-    console.log('\n===========================================================');
-    console.log('⚖️ [Dual Mode] Standard report completed. Now filing Legal Notice...');
-    console.log('===========================================================');
+  if (shouldExecuteLegalNotice && activeType !== 'legal' && activeReason !== 'legal') {
+    console.log('[Dual Mode] Standard report completed. Filing Legal Notice...');
     await executeLegalNoticeFlow({
       page,
       browser,
       reportPage,
-      reviewUrl,
+      reviewUrl: targetUrl,
       details,
       aiOptions,
       senderInfo,
-      cursor,
+      cursor: reportCursor || cursor,
       smartClick,
-      sleep
+      sleep,
+      captchaApiKey
     });
   }
 
-  console.log('\n===========================================================');
-  console.log('✅ Google Maps fake review report completed successfully!');
-  console.log('===========================================================');
+  console.log('[Maps Reporter] Report submitted successfully.');
   return true;
 }
 

@@ -95,9 +95,54 @@ async function applyDeepStealth(page) {
         });
       }
     }
+
+    // 7. Suppress "Leave site?" beforeunload prompt dialogs (e.g. from Gmail or Google Forms)
+    try {
+      window.addEventListener('beforeunload', (e) => {
+        delete e['returnValue'];
+      }, { capture: true });
+
+      const origAddEvt = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function(type, listener, options) {
+        if (type === 'beforeunload') {
+          return; // Neutralize beforeunload listeners that trigger "Leave site?" prompts
+        }
+        return origAddEvt.call(this, type, listener, options);
+      };
+
+      Object.defineProperty(window, 'onbeforeunload', {
+        get: () => null,
+        set: () => {},
+        configurable: true
+      });
+    } catch (_) {}
   }).catch(() => {});
+
+  // Attach native dialog auto-handler to automatically click "Leave" if browser prompts
+  attachDialogAutoHandler(page);
+}
+
+/**
+ * Automatically intercepts and accepts native browser dialogs (beforeunload, alert, confirm, prompt).
+ * This immediately clicks "Leave" on "Leave site?" prompts from Gmail and prevents hanging.
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ */
+function attachDialogAutoHandler(page) {
+  if (!page || page.__dialogHandlerAttached) return;
+  page.__dialogHandlerAttached = true;
+  page.on('dialog', async (dialog) => {
+    const dType = dialog.type();
+    const msg = dialog.message() || '';
+    console.log(`🔔 [Browser Dialog] Auto-accepting native "${dType}" prompt ("${msg}") -> Clicking "Leave" / "OK"...`);
+    try {
+      await dialog.accept();
+    } catch (e) {
+      try { await dialog.dismiss(); } catch (_) {}
+    }
+  });
 }
 
 module.exports = {
-  applyDeepStealth
+  applyDeepStealth,
+  attachDialogAutoHandler
 };
