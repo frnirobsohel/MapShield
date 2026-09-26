@@ -648,18 +648,6 @@ class DatabaseService {
         stmt.run(k, storeVal, new Date().toISOString());
       }
       this.db.exec('COMMIT;');
-
-      // Auto-sync 2captcha extension config if extension folder exists
-      if (settings.captchaApiKey) {
-        try {
-          const extConfigPath = path.join(__dirname, '..', 'extensions', '2captcha-solver', 'common', 'config.js');
-          if (fs.existsSync(extConfigPath)) {
-            let confContent = fs.readFileSync(extConfigPath, 'utf8');
-            confContent = confContent.replace(/apiKey:\s*(['"][^'"]*['"]|null)/, `apiKey: "${settings.captchaApiKey}"`);
-            fs.writeFileSync(extConfigPath, confContent, 'utf8');
-          }
-        } catch (_) {}
-      }
     } catch (e) {
       this.db.exec('ROLLBACK;');
       throw e;

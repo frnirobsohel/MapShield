@@ -82,34 +82,47 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  // Security Hardening: Enforce Content-Security-Policy on all renderer web requests
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: file:; connect-src 'self' https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.deepseek.com;"
-        ]
-      }
+// Enforce single instance lock to prevent concurrent database access collisions
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    // Security Hardening: Enforce Content-Security-Policy on all renderer web requests
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: file:; connect-src 'self' https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.deepseek.com https://2captcha.com https://api.2captcha.com;"
+          ]
+        }
+      });
+    });
+
+    createWindow();
+
+    // Background non-blocking pre-warming of caches so initial renderer IPCs respond in 0ms
+    setTimeout(() => {
+      prewarmHardwareId().catch(() => {});
+      detectInstalledBrowsers();
+    }, 80);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
-  createWindow();
-
-  // Background non-blocking pre-warming of caches so initial renderer IPCs respond in 0ms
-  setTimeout(() => {
-    prewarmHardwareId().catch(() => {});
-    detectInstalledBrowsers();
-  }, 80);
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
   });
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+}

@@ -14,10 +14,19 @@ const { getDatabase } = require('./database/db');
 const { isNetworkError } = require('./modules/network');
 const { PROOFS_DIR, ERRORS_DIR } = require('./modules/helpers/screenshot_paths');
 
-// Helper to notify Electron parent process
+// Helper to notify Electron parent process (with CLI direct DB fallback)
 function notifyParent(type, data) {
   if (process.send) {
     process.send({ type, data });
+  } else {
+    try {
+      const db = getDatabase();
+      if (type === 'account_update' && data && data.email) {
+        db.updateAccountStatus(data.email, data);
+      } else if (type === 'link_update' && data && data.url) {
+        db.updateLinkProgress(data.url, data);
+      }
+    } catch (_) {}
   }
 }
 
@@ -205,6 +214,8 @@ async function executeQueue() {
   if (payload.aiProvider) process.env.AI_PROVIDER = payload.aiProvider;
   if (payload.aiModel) process.env.AI_MODEL = payload.aiModel;
   if (payload.aiInspection !== undefined) process.env.AI_INSPECTION = payload.aiInspection ? 'true' : 'false';
+  if (payload.captchaApiKey) process.env.TWOCAPTCHA_API_KEY = payload.captchaApiKey;
+  if (payload.captchaAutoSolve !== undefined) process.env.CAPTCHA_AUTO_SOLVE = payload.captchaAutoSolve ? 'true' : 'false';
 
   // AI configuration resolution
   let aiConfig = {
@@ -305,6 +316,7 @@ async function executeQueue() {
       {
         email: payload.email,
         password: payload.password,
+        twoFactor: payload.twoFactor || payload['2fa'] || '',
         backupCode: payload.backupCode
       }
     ];
@@ -533,6 +545,7 @@ async function executeQueue() {
         aiOptions: aiConfig,
         senderInfo,
         captchaApiKey: payload.captchaApiKey || dbSettings.captchaApiKey || undefined,
+        captchaAutoSolve: payload.captchaAutoSolve !== undefined ? payload.captchaAutoSolve : (dbSettings.captchaAutoSolve !== false),
         isLast: i === jobs.length - 1
       });
       console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
@@ -637,6 +650,56 @@ async function executeQueue() {
         // Break loop to completely stop runner from burning subsequent accounts
         break;
       }
+
+      // ── Phone Verification Wall ──────────────────────────────────────────────
+      // Google is asking for a phone number. We cannot bypass this.
+      // Safe action: skip this account silently and move on to the next job.
+      const isPhoneWall = err.message && err.message.startsWith('PHONE_VERIFICATION_REQUIRED');
+      if (isPhoneWall) {
+        console.warn(`\n📵 [Phone Wall] Account "${currentAccount ? currentAccount.email : 'unknown'}" requires phone verification — skipping.`);
+        console.warn(`⏭️  Moving to next account in queue...\n`);
+
+        // Audit log: phone wall skip
+        try {
+          const db = getDatabase();
+          db.recordAuditLog({
+            url: currentUrl,
+            email: currentAccount ? currentAccount.email : null,
+            proxy: currentProxy || null,
+            status: 'skipped',
+            reason: currentJob.reason || payload.reportReason || 'spam',
+            mode: currentJob.mode || payload.reportType || 'standard',
+            error: 'Phone verification required — account skipped',
+            screenshot: null,
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn('[SQLite Audit] Notice:', e.message);
+        }
+
+        // Notify UI: mark account as skipped (NOT used, NOT failed — preserves reuse potential)
+        if (currentAccount && currentAccount.email) {
+          notifyParent('account_update', {
+            email: currentAccount.email,
+            status: 'skipped',
+            used: false,
+            error: 'Phone verification required',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+        }
+
+        notifyParent('link_update', {
+          url: currentUrl,
+          status: 'skipped',
+          error: 'Account skipped: phone verification required',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
+        processedCount = i + 1;
+        // continue to next job — DO NOT break, DO NOT fall through to generic failure handler
+        continue;
+      }
+      // ─────────────────────────────────────────────────────────────────────────
 
       processedCount = i + 1;
 

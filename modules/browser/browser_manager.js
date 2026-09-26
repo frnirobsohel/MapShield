@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // Anti-detect puppeteer core
 const puppeteer = require('rebrowser-puppeteer-core');
 const { parseProxy } = require('../network');
-const { applyDeepStealth } = require('../helpers/stealth');
+const { applyDeepStealth, attachDialogAutoHandler } = require('../helpers/stealth');
 
 /**
  * BrowserManager
@@ -102,13 +102,7 @@ class BrowserManager {
       ...(Array.isArray(options.args) ? options.args : [])
     ];
 
-    // Dynamic 2Captcha Solver Extension Injection
-    const captchaExtPath = path.resolve(__dirname, '../../extensions/2captcha-solver');
-    if (fs.existsSync(captchaExtPath) && options.loadCaptchaExtension !== false) {
-      chromeArgs.push(`--disable-extensions-except=${captchaExtPath}`);
-      chromeArgs.push(`--load-extension=${captchaExtPath}`);
-      console.log(`🧩 [BrowserManager]: Auto-loaded 2Captcha extension from ${captchaExtPath}`);
-    }
+    // Clean launch with Zero-Extension stealth (click-based solver active)
 
     const browser = await puppeteer.launch({
       executablePath: browserPath,
@@ -128,6 +122,7 @@ class BrowserManager {
       await page.authenticate(proxyAuth).catch(() => {});
     }
 
+    if (attachDialogAutoHandler) attachDialogAutoHandler(page);
     await applyDeepStealth(page);
 
     browser.on('targetcreated', async (target) => {
@@ -135,6 +130,7 @@ class BrowserManager {
         if (target.type() === 'page') {
           const newP = await target.page().catch(() => null);
           if (newP) {
+            if (attachDialogAutoHandler) attachDialogAutoHandler(newP);
             if (proxyAuth && proxyAuth.username) {
               await newP.authenticate(proxyAuth).catch(() => {});
             }

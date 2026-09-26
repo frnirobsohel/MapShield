@@ -190,6 +190,13 @@ function setReviewLinkPreferredPath(reviewUrl, pathKey) {
  */
 function clearReviewLinkPreferences() {
   reviewLinkTroubleshooterPreferences.clear();
+  try {
+    const { getDatabase } = require('../../database/db');
+    const db = getDatabase();
+    if (db && db.db) {
+      db.db.prepare("DELETE FROM app_settings WHERE key LIKE 'ts_pref_%'").run();
+    }
+  } catch (_) {}
 }
 
 /**
@@ -1037,6 +1044,7 @@ async function fillLegalRemovalForm(activePage, options = {}) {
   const smartClick = options.smartClick || defaultSmartClick;
   const cursor = options.cursor;
   const captchaApiKey = options.captchaApiKey;
+  const captchaAutoSolve = options.captchaAutoSolve;
 
   const reviewUrl = options.reviewUrl;
   const legalNotice = options.legalNotice || {};
@@ -1061,7 +1069,7 @@ async function fillLegalRemovalForm(activePage, options = {}) {
         try {
           const { handlePageCaptcha } = require('../captcha/captcha_solver');
           console.log('🧩 [Legal Form Sync]: Detected CAPTCHA before legal form open. Invoking Auto-Solver...');
-          const cRes = await handlePageCaptcha(activePage, { apiKey: captchaApiKey || options.captchaApiKey });
+          const cRes = await handlePageCaptcha(activePage, { apiKey: captchaApiKey || options.captchaApiKey, autoSolve: captchaAutoSolve });
           if (cRes.solved) {
             console.log('🎉 [Legal Form Sync]: CAPTCHA bypassed successfully!');
           }
@@ -1380,7 +1388,7 @@ async function fillLegalRemovalForm(activePage, options = {}) {
 
       try {
         const { handlePageCaptcha } = require('../captcha/captcha_solver');
-        await handlePageCaptcha(activePage, { apiKey: options.captchaApiKey });
+        await handlePageCaptcha(activePage, { apiKey: options.captchaApiKey, autoSolve: captchaAutoSolve });
       } catch (cErr) {
         console.warn('⚠️ CAPTCHA Auto-Solver notice:', cErr.message);
       }
@@ -1545,7 +1553,7 @@ Proof Screenshot: ${screenshotPath}
  * @param {Object} options
  */
 async function executeFullLegalFlow(options) {
-  const { page, reportPage, reviewUrl, legalNotice, senderInfo, sleep, smartClick, cursor, browser, captchaApiKey } = options;
+  const { page, reportPage, reviewUrl, legalNotice, senderInfo, sleep, smartClick, cursor, browser, captchaApiKey, captchaAutoSolve } = options;
   const activePage = reportPage || page;
 
   // Stage 1: Walkthrough Troubleshooter
@@ -1590,7 +1598,8 @@ async function executeFullLegalFlow(options) {
     sleep,
     smartClick,
     cursor,
-    captchaApiKey
+    captchaApiKey,
+    captchaAutoSolve
   });
 
   return result;

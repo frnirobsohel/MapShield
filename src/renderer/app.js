@@ -3322,6 +3322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const res = await window.desktopAPI.startAgent({
         email: primaryAcc.email || '',
         password: primaryAcc.password || '',
+        twoFactor: primaryAcc.twoFactor || primaryAcc['2fa'] || '',
         backupCode: primaryAcc.backupCode || '',
         accounts: loadedAccounts,
         urls: urls,
@@ -3338,7 +3339,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         legalFullName: inputLegalFullName?.value.trim() || appConfig.legalFullName || '',
         legalBusinessName: inputLegalBusinessName?.value.trim() || appConfig.legalBusinessName || '',
         legalCountry: inputLegalCountry?.value.trim() || appConfig.legalCountry || 'United States',
-        proxy: proxyCfg
+        proxy: proxyCfg,
+        captchaApiKey: window.captchaComponent?.getConfig()?.apiKey || appConfig.captchaApiKey || '',
+        captchaAutoSolve: window.captchaComponent?.getConfig()?.autoSolve !== false
       });
 
       if (!res.success) {
@@ -3447,10 +3450,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!data || !data.email) return;
         const target = loadedAccounts.find(a => a.email.toLowerCase() === data.email.toLowerCase());
         if (target) {
-          target.used = true;
-          target.usedCount = (target.usedCount || 0) + 1;
+          const isSuccess = data.status === 'success' || data.status === 'completed';
+          const shouldMarkUsed = isSuccess && data.used !== false;
+          if (shouldMarkUsed) {
+            target.used = true;
+            target.usedCount = (target.usedCount || 0) + 1;
+          } else if (data.used === false) {
+            target.used = false;
+          }
           target.lastUsedAt = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          target.status = data.status; // 'success' or 'failed'
+          target.status = data.status; // 'success', 'failed', 'ready'
           target.lastError = data.error || null;
           saveLoadedAccounts();
           renderAccountsTable();
@@ -3462,7 +3471,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.desktopAPI.onLinkUpdate) {
       window.desktopAPI.onLinkUpdate((data) => {
         if (!data || !data.url) return;
-        const target = loadedLinks.find(l => l.url === data.url || l.url.includes(data.url) || data.url.includes(l.url));
+        const cleanDataUrl = String(data.url).trim().replace(/\/+$/, '');
+        const target = loadedLinks.find(l => String(l.url || '').trim().replace(/\/+$/, '') === cleanDataUrl);
         if (target) {
           if (data.status === 'completed') {
             target.doneCount = (target.doneCount || 0) + 1;

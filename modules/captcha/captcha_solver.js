@@ -1,11 +1,13 @@
 /**
  * modules/captcha/captcha_solver.js
- * Universal CAPTCHA Auto-Solver Engine
+ * Universal CAPTCHA Auto-Solver Engine (Interactive Click-Based Solver)
  * 
- * Supports:
- * 1. 2Captcha Chrome Extension (Real-time DOM solver button .captcha-solver[data-state="solved"])
- * 2. 2Captcha Direct HTTP API (Native fetch token resolution & callback dispatch)
- * 3. Human-assisted countdown fallback
+ * Based on 2captcha/puppeteer-recaptcha-solver-using-clicks:
+ * 1. Native reCAPTCHA DOM & Canvas Parameter Extraction (initCaptchaParamsExtractor)
+ * 2. 2Captcha Grid API Resolution (@2captcha/captcha-solver)
+ * 3. Human-like Mouse Coordinate Clicks (clickAtCoordinates & clickRecaptchaVerifyButton)
+ * 4. Multi-round & dynamic replacement tiles handling
+ * 5. Graceful fallback countdown
  */
 
 const { sleep, randomBetween } = require('../helpers/biometrics');
@@ -22,10 +24,12 @@ async function detectCaptcha(page) {
 
   try {
     return await page.evaluate(() => {
-      // 1. Google reCAPTCHA
-      const recaptchaEl = document.querySelector('[data-sitekey], iframe[src*="recaptcha"], div.g-recaptcha, #captcha-form');
-      if (recaptchaEl) {
-        let sitekey = recaptchaEl.getAttribute('data-sitekey');
+      // 1. Google reCAPTCHA & Robot Challenges (including Google Login "Confirm you're not a robot")
+      const pageText = (document.body ? document.body.innerText : '').toLowerCase();
+      const hasRobot = pageText.includes('confirm you’re not a robot') || pageText.includes('confirm you are not a robot');
+      const recaptchaEl = document.querySelector('[data-sitekey], iframe[src*="recaptcha"], div.g-recaptcha, #captcha-form, #captcha, div[id*="captcha"]');
+      if (recaptchaEl || hasRobot) {
+        let sitekey = recaptchaEl && typeof recaptchaEl.getAttribute === 'function' ? recaptchaEl.getAttribute('data-sitekey') : null;
         if (!sitekey) {
           const iframe = document.querySelector('iframe[src*="recaptcha"]');
           if (iframe && iframe.src) {
@@ -34,6 +38,12 @@ async function detectCaptcha(page) {
           }
         }
         return { hasCaptcha: true, type: 'recaptcha', sitekey: sitekey || null };
+      }
+
+      // 1.1 Google Distorted Image Text CAPTCHA (e.g. Type the text you see above)
+      const imgCaptcha = document.querySelector('img#captchaimg, img[src*="Captcha"], img[src*="GetCaptcha"]');
+      if (imgCaptcha) {
+        return { hasCaptcha: true, type: 'image_captcha', sitekey: null };
       }
 
       // 2. Cloudflare Turnstile
@@ -72,216 +82,534 @@ async function detectCaptcha(page) {
 }
 
 /**
- * Solves CAPTCHA using 2Captcha Extension if loaded in browser
+ * Checks if reCAPTCHA has been successfully solved on the page
  * @param {import('rebrowser-puppeteer-core').Page} page
- * @param {number} [timeoutMs=90000]
  * @returns {Promise<boolean>}
  */
-async function solveViaExtension(page, timeoutMs = 90000) {
+async function isRecaptchaPassed(page) {
   try {
-    // Poll up to 7s for the extension to detect captcha widget and mount its .captcha-solver button
-    let hasSolverBtn = false;
-    const checkStart = Date.now();
-    while (Date.now() - checkStart < 7000) {
-      hasSolverBtn = typeof page.$ === 'function'
-        ? await page.$('.captcha-solver').catch(() => null)
-        : await page.evaluate(() => !!document.querySelector('.captcha-solver')).catch(() => null);
-      if (hasSolverBtn) break;
-      await sleep(1000);
-    }
-    if (!hasSolverBtn) return false;
+    if (!page) return false;
 
-    console.log('🧩 [2Captcha Extension]: Solver button detected on page. Initiating automatic solve...');
-
-    // Click solver button if in ready state
-    await page.evaluate(() => {
-      const btn = document.querySelector('.captcha-solver');
-      if (btn && btn.getAttribute('data-state') === 'ready') {
-        btn.click();
+    // 1. Check anchor checkbox state across frames
+    if (typeof page.frames === 'function') {
+      const frames = page.frames();
+      for (const frame of frames) {
+        try {
+          const isChecked = await frame.$('.recaptcha-checkbox-checked');
+          if (isChecked) return true;
+        } catch (_) {}
       }
-    }).catch(() => {});
+    }
 
-    const startTime = Date.now();
-    let lastLog = Date.now();
+    // 2. Check if challenge bframe has disappeared / hidden
+    const bframe = typeof page.$ === 'function'
+      ? await page.$('iframe[src*="recaptcha/api2/bframe"]').catch(() => null)
+      : null;
 
-    while (Date.now() - startTime < timeoutMs) {
-      const state = await page.evaluate(() => {
-        const btn = document.querySelector('.captcha-solver');
-        if (!btn) return 'not_found';
-        return btn.getAttribute('data-state') || 'unknown';
-      }).catch(() => 'error');
+    if (!bframe && typeof page.evaluate === 'function') {
+      const hasToken = await page.evaluate(() => {
+        const ta = document.querySelector('textarea[name="g-recaptcha-response"], #g-recaptcha-response');
+        return ta && ta.value && ta.value.length > 20;
+      }).catch(() => false);
+      if (hasToken) return true;
+    }
 
-      if (state === 'solved') {
-        console.log('🎉 [2Captcha Extension]: CAPTCHA solved successfully!');
-        await sleep(randomBetween(1500, 2500));
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Checks for presence of reCAPTCHA challenge bframe and validates against DOS blocks
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {number} [timeoutMs=8000]
+ * @returns {Promise<{ found: boolean, dosBlocked: boolean, frame: any }>}
+ */
+async function isFoundRecaptchaChallengeFrame(page, timeoutMs = 8000) {
+  try {
+    if (!page || typeof page.waitForSelector !== 'function') {
+      return { found: false, dosBlocked: false, frame: null };
+    }
+
+    const frameHandle = await page.waitForSelector(
+      'iframe[src*="recaptcha/api2/bframe"], iframe[title*="recaptcha challenge"]',
+      { timeout: timeoutMs }
+    ).catch(() => null);
+
+    if (!frameHandle) {
+      return { found: false, dosBlocked: false, frame: null };
+    }
+
+    const frame = await frameHandle.contentFrame();
+    if (!frame) {
+      return { found: false, dosBlocked: false, frame: null };
+    }
+
+    // Check for Google reCAPTCHA DOS message
+    const isFoundDosMessage = await frame.evaluate(() => {
+      const dosMessageElement = document.querySelector('.rc-doscaptcha-header');
+      return !!dosMessageElement;
+    }).catch(() => false);
+
+    if (isFoundDosMessage) {
+      console.warn('⚠️ [2Captcha Clicks]: reCAPTCHA DOS Limit triggered: "Try again later. Your computer or network may be sending automated queries."');
+      return { found: false, dosBlocked: true, frame };
+    }
+
+    return { found: true, dosBlocked: false, frame };
+  } catch (err) {
+    return { found: false, dosBlocked: false, frame: null };
+  }
+}
+
+/**
+ * Injects parameter extraction function inside the reCAPTCHA challenge bframe
+ * Draws tiles on in-memory canvas to assemble clean JPEG representation for 2Captcha Grid API
+ * @param {any} frame Puppeteer Frame
+ */
+async function initCaptchaParamsExtractor(frame) {
+  if (!frame || typeof frame.evaluate !== 'function') return;
+
+  await frame.evaluate(() => {
+    window.getRecaptchaParams = () => {
+      return new Promise((resolve, reject) => {
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const descEl = document.querySelector('.rc-imageselect-desc-wrapper') || document.querySelector('.rc-imageselect-desc');
+          const comment = descEl ? descEl.innerText.replace(/\n+/g, ' ').trim() : '';
+
+          const img4x4 = document.querySelector('img.rc-image-tile-44');
+          if (!img4x4) {
+            const table3x3 = document.querySelector('table.rc-imageselect-table-33 > tbody') || document.querySelector('table.rc-imageselect-table-33');
+            if (!table3x3) {
+              reject(new Error('Cannot find reCAPTCHA grid elements in frame'));
+              return;
+            }
+
+            const initial3x3img = table3x3.querySelector('img.rc-image-tile-33');
+            if (!initial3x3img) {
+              reject(new Error('Cannot find initial 3x3 image tile'));
+              return;
+            }
+
+            canvas.width = initial3x3img.naturalWidth || initial3x3img.width || 300;
+            canvas.height = initial3x3img.naturalHeight || initial3x3img.height || 300;
+            ctx.drawImage(initial3x3img, 0, 0);
+
+            // Handle replacement tiles (fading tiles) in 3x3
+            const updatedTiles = document.querySelectorAll('img.rc-image-tile-11');
+            if (updatedTiles.length > 0) {
+              const pos = [
+                { x: 0, y: 0 },
+                { x: ctx.canvas.width / 3, y: 0 },
+                { x: (ctx.canvas.width / 3) * 2, y: 0 },
+                { x: 0, y: ctx.canvas.height / 3 },
+                { x: ctx.canvas.width / 3, y: ctx.canvas.height / 3 },
+                { x: (ctx.canvas.width / 3) * 2, y: ctx.canvas.height / 3 },
+                { x: 0, y: (ctx.canvas.height / 3) * 2 },
+                { x: ctx.canvas.width / 3, y: (ctx.canvas.height / 3) * 2 },
+                { x: (ctx.canvas.width / 3) * 2, y: (ctx.canvas.height / 3) * 2 },
+              ];
+
+              updatedTiles.forEach((tile) => {
+                const cell = tile.closest('td');
+                const allCells = cell && cell.parentElement && cell.parentElement.parentElement
+                  ? Array.from(cell.parentElement.parentElement.querySelectorAll('td'))
+                  : [];
+                const ind = cell ? allCells.indexOf(cell) : -1;
+                if (ind >= 0 && pos[ind]) {
+                  ctx.drawImage(tile, pos[ind].x, pos[ind].y);
+                }
+              });
+            }
+
+            resolve({
+              rows: 3,
+              columns: 3,
+              type: 'GridTask',
+              comment: comment || 'Select matching images',
+              body: canvas.toDataURL('image/jpeg').replace(/^data:image\/?[A-Za-z]*;base64,/, '')
+            });
+          } else {
+            canvas.width = img4x4.naturalWidth || img4x4.width || 450;
+            canvas.height = img4x4.naturalHeight || img4x4.height || 450;
+            ctx.drawImage(img4x4, 0, 0);
+            resolve({
+              rows: 4,
+              columns: 4,
+              type: 'GridTask',
+              comment: comment || 'Select matching images',
+              body: canvas.toDataURL('image/jpeg').replace(/^data:image\/?[A-Za-z]*;base64,/, '')
+            });
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    };
+  });
+}
+
+/**
+ * Retrieves captcha image parameters from the challenge frame
+ * @param {any} frame 
+ * @returns {Promise<{ rows: number, columns: number, comment: string, body: string, type: string }>}
+ */
+async function getCaptchaParams(frame) {
+  if (!frame || typeof frame.evaluate !== 'function') {
+    throw new Error('Frame evaluate unavailable');
+  }
+  return await frame.evaluate(() => {
+    return window.getRecaptchaParams();
+  });
+}
+
+/**
+ * Calculates tile coordinates and performs human-like mouse click
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {any} frame
+ * @param {number} recaptchaSize 3 or 4
+ * @param {number} number Tile number (1-based index)
+ */
+async function clickAtCoordinates(page, frame, recaptchaSize = 3, number = 1) {
+  if (!page || !page.mouse) return;
+
+  const frameHandle = typeof page.$ === 'function'
+    ? await page.$('iframe[src*="recaptcha/api2/bframe"], iframe[title*="recaptcha challenge"]').catch(() => null)
+    : null;
+  if (!frameHandle) return;
+
+  const boundingBox = await frameHandle.boundingBox().catch(() => null);
+  if (!boundingBox) return;
+
+  let x = boundingBox.x;
+  let y = boundingBox.y;
+
+  if (recaptchaSize === 3) {
+    const col = (number - 1) % 3;
+    const row = Math.floor((number - 1) / 3);
+    x = boundingBox.x + 60 + (col * 130) + randomBetween(-6, 6);
+    y = boundingBox.y + 120 + 65 + (row * 130) + randomBetween(-6, 6);
+  } else if (recaptchaSize === 4) {
+    const col = (number - 1) % 4;
+    const row = Math.floor((number - 1) / 4);
+    const heightTop = 130;
+    const width = 95;
+    x = boundingBox.x + 45 + (col * width) + randomBetween(-5, 5);
+    y = boundingBox.y + 45 + heightTop + (row * width) + randomBetween(-5, 5);
+  }
+
+  console.log(`🎯 [2Captcha Clicks]: Clicking tile #${number} (${recaptchaSize}x${recaptchaSize}) at (${Math.round(x)}, ${Math.round(y)})`);
+
+  if (typeof page.mouse.move === 'function') {
+    await page.mouse.move(x, y, { steps: randomBetween(2, 5) }).catch(() => {});
+    await sleep(randomBetween(40, 90));
+  }
+  await page.mouse.click(x, y).catch(() => {});
+}
+
+/**
+ * Clicks the Verify / Skip button on the challenge bframe
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {any} frame
+ */
+async function clickRecaptchaVerifyButton(page, frame) {
+  if (!page || !page.mouse) return;
+
+  const frameHandle = typeof page.$ === 'function'
+    ? await page.$('iframe[src*="recaptcha/api2/bframe"], iframe[title*="recaptcha challenge"]').catch(() => null)
+    : null;
+  if (!frameHandle) return;
+
+  const boundingBox = await frameHandle.boundingBox().catch(() => null);
+  if (!boundingBox) return;
+
+  // Attempt dynamic element bounding rect measurement inside frame
+  let btnRect = null;
+  if (frame && typeof frame.evaluate === 'function') {
+    btnRect = await frame.evaluate(() => {
+      const btn = document.querySelector('#recaptcha-verify-button, button#recaptcha-verify-button, .rc-button-default');
+      if (btn) {
+        const r = btn.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      }
+      return null;
+    }).catch(() => null);
+  }
+
+  let x, y;
+  if (btnRect && btnRect.width > 0) {
+    x = boundingBox.x + btnRect.left + (btnRect.width / 2) + randomBetween(-5, 5);
+    y = boundingBox.y + btnRect.top + (btnRect.height / 2) + randomBetween(-5, 5);
+  } else {
+    // Standard 2captcha repo coordinates
+    x = boundingBox.x + 340 + randomBetween(1, 35);
+    y = boundingBox.y + 540 + randomBetween(1, 5);
+  }
+
+  console.log(`🚀 [2Captcha Clicks]: Clicking Verify/Skip button at (${Math.round(x)}, ${Math.round(y)})`);
+
+  if (typeof page.mouse.move === 'function') {
+    await page.mouse.move(x, y, { steps: randomBetween(3, 6) }).catch(() => {});
+    await sleep(randomBetween(50, 100));
+  }
+  await page.mouse.click(x, y).catch(() => {});
+}
+
+/**
+ * Triggers the reCAPTCHA checkbox if present and not yet clicked
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function triggerRecaptchaCheckbox(page) {
+  try {
+    if (!page || typeof page.$ !== 'function') return false;
+
+    const anchorFrameHandle = await page.$(
+      'iframe[src*="recaptcha/api2/anchor"], iframe[title="reCAPTCHA"]'
+    ).catch(() => null);
+    if (!anchorFrameHandle) return false;
+
+    const anchorFrame = await anchorFrameHandle.contentFrame();
+    if (!anchorFrame) return false;
+
+    const alreadyChecked = await anchorFrame.$('.recaptcha-checkbox-checked').catch(() => null);
+    if (alreadyChecked) {
+      console.log('✅ [2Captcha Clicks]: reCAPTCHA checkbox is already checked.');
+      return true;
+    }
+
+    console.log('👉 [2Captcha Clicks]: Clicking reCAPTCHA checkbox anchor...');
+    const clicked = await anchorFrame.evaluate(() => {
+      const cb = document.querySelector('.recaptcha-checkbox-unchecked, #recaptcha-anchor, span.recaptcha-checkbox');
+      if (cb) {
+        cb.click();
         return true;
       }
+      return false;
+    }).catch(() => false);
 
-      if (Date.now() - lastLog >= 8000) {
-        console.log(`⏳ [2Captcha Extension]: Solving in progress... (${Math.round((Date.now() - startTime) / 1000)}s elapsed, state: ${state})`);
-        lastLog = Date.now();
+    if (!clicked && page.mouse) {
+      const box = await anchorFrameHandle.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.click(box.x + 28 + randomBetween(-3, 3), box.y + 38 + randomBetween(-3, 3));
       }
-
-      await sleep(1500);
     }
 
-    console.warn('⚠️ [2Captcha Extension]: Solving timed out.');
-    return false;
+    await sleep(randomBetween(1500, 2500));
+    return true;
   } catch (err) {
-    console.warn('⚠️ [2Captcha Extension]: Notice during extension solve:', err.message);
+    console.warn('⚠️ [2Captcha Clicks]: Notice during checkbox click:', err.message);
     return false;
   }
 }
 
 /**
- * Solves reCAPTCHA V2 via direct 2Captcha HTTP API
- * @param {string} apiKey 2Captcha user key
- * @param {string} sitekey Target site key
- * @param {string} pageUrl Target page URL
- * @param {number} [timeoutMs=120000]
- * @returns {Promise<string|null>} Token string or null
- */
-async function solveRecaptchaViaApi(apiKey, sitekey, pageUrl, timeoutMs = 120000) {
-  if (!apiKey || !sitekey || !pageUrl) return null;
-
-  try {
-    console.log(`🌐 [2Captcha API]: Sending reCAPTCHA task to 2Captcha (sitekey: ${sitekey.slice(0, 10)}...)...`);
-
-    // 1. Submit request
-    const inUrl = `https://2captcha.com/in.php?key=${encodeURIComponent(apiKey)}&method=userrecaptcha&googlekey=${encodeURIComponent(sitekey)}&pageurl=${encodeURIComponent(pageUrl)}&json=1`;
-    const inRes = await fetch(inUrl).then(r => r.json()).catch(() => null);
-
-    if (!inRes || inRes.status !== 1 || !inRes.request) {
-      console.warn('⚠️ [2Captcha API]: Failed to submit CAPTCHA task:', inRes?.request || 'Network error');
-      return null;
-    }
-
-    const taskId = inRes.request;
-    console.log(`⏳ [2Captcha API]: Task submitted (ID: ${taskId}). Awaiting solution...`);
-
-    // 2. Poll for result
-    const startTime = Date.now();
-    await sleep(15000); // 2Captcha reCAPTCHA takes minimum 12-15s
-
-    while (Date.now() - startTime < timeoutMs) {
-      const resUrl = `https://2captcha.com/res.php?key=${encodeURIComponent(apiKey)}&action=get&id=${encodeURIComponent(taskId)}&json=1`;
-      const resJson = await fetch(resUrl).then(r => r.json()).catch(() => null);
-
-      if (resJson && resJson.status === 1 && resJson.request) {
-        console.log('🎉 [2Captcha API]: Token received from 2Captcha successfully!');
-        return resJson.request;
-      }
-
-      if (resJson && resJson.request !== 'CAPCHA_NOT_READY') {
-        console.warn('⚠️ [2Captcha API]: 2Captcha returned response:', resJson.request);
-        return null;
-      }
-
-      await sleep(5000);
-    }
-
-    console.warn('⚠️ [2Captcha API]: Solving timed out after 120s.');
-    return null;
-  } catch (err) {
-    console.error('❌ [2Captcha API]: Error during API solving:', err.message);
-    return null;
-  }
-}
-
-/**
- * Injects solved reCAPTCHA response token into page DOM and dispatches callbacks
+ * Solves reCAPTCHA using the 2Captcha Grid API and Puppeteer mouse clicks
+ * (Direct implementation of 2captcha/puppeteer-recaptcha-solver-using-clicks)
+ * 
  * @param {import('rebrowser-puppeteer-core').Page} page
- * @param {string} token
+ * @param {string} apiKey 2Captcha user API key
+ * @param {Object} [options]
  * @returns {Promise<boolean>}
  */
-async function injectRecaptchaToken(page, token) {
-  if (!page || !token) return false;
+async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
+  if (!apiKey) {
+    console.warn('⚠️ [2Captcha Clicks]: 2Captcha API key is not configured.');
+    return false;
+  }
 
-  try {
-    return await page.evaluate((tok) => {
-      let injected = false;
+  const TwoCaptcha = require('@2captcha/captcha-solver');
+  const solver = new TwoCaptcha.Solver(apiKey, 1000);
 
-      // 1. Inject into standard response textareas
-      const textareas = document.querySelectorAll(
-        'textarea[name="g-recaptcha-response"], #g-recaptcha-response, textarea[id*="g-recaptcha"], textarea[name="h-captcha-response"], textarea[name="cf-turnstile-response"]'
-      );
-      textareas.forEach(ta => {
-        ta.innerHTML = tok;
-        ta.value = tok;
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
-        ta.dispatchEvent(new Event('change', { bubbles: true }));
-        injected = true;
+  console.log('🧩 [2Captcha Clicks]: Initializing interactive click-based reCAPTCHA solver...');
+
+  // 1. Trigger anchor checkbox if present
+  await triggerRecaptchaCheckbox(page);
+
+  // 2. Check if passed immediately without popup challenge
+  if (await isRecaptchaPassed(page)) {
+    console.log('🎉 [2Captcha Clicks]: reCAPTCHA passed immediately without image challenge!');
+    return true;
+  }
+
+  // 3. Locate challenge bframe
+  const challengeInfo = await isFoundRecaptchaChallengeFrame(page, 8000);
+  if (!challengeInfo.found) {
+    if (challengeInfo.dosBlocked) {
+      return false;
+    }
+    if (await isRecaptchaPassed(page)) {
+      return true;
+    }
+    console.warn('⚠️ [2Captcha Clicks]: reCAPTCHA challenge bframe not found on page.');
+    return false;
+  }
+
+  const frame = challengeInfo.frame;
+
+  // 4. Initialize extractor
+  await initCaptchaParamsExtractor(frame);
+
+  let isNotSolved = true;
+  let attempts = 0;
+  const maxAttempts = options.maxAttempts || 8;
+
+  while (isNotSolved && attempts < maxAttempts) {
+    attempts++;
+    console.log(`\n⏳ [2Captcha Clicks]: Solving round #${attempts}/${maxAttempts}...`);
+
+    let captchaParams;
+    try {
+      captchaParams = await getCaptchaParams(frame);
+    } catch (extractErr) {
+      console.warn(`⚠️ [2Captcha Clicks]: Failed to extract captcha params in round ${attempts}:`, extractErr.message);
+      await sleep(2000);
+      if (await isRecaptchaPassed(page)) return true;
+      break;
+    }
+
+    if (!captchaParams || !captchaParams.body) {
+      console.warn('⚠️ [2Captcha Clicks]: Empty captcha image received from extractor.');
+      break;
+    }
+
+    console.log(`🌐 [2Captcha Clicks]: Sending ${captchaParams.columns}x${captchaParams.rows} grid challenge ("${captchaParams.comment}") to 2Captcha API...`);
+
+    let answer;
+    try {
+      answer = await solver.grid({
+        body: captchaParams.body,
+        textinstructions: captchaParams.comment,
+        cols: captchaParams.columns,
+        rows: captchaParams.rows,
+        canSkip: 1,
+        img_type: 'recaptcha'
       });
+    } catch (apiErr) {
+      console.error('❌ [2Captcha Clicks]: 2Captcha API error:', apiErr.message);
+      if (apiErr.message.includes('ERROR_WRONG_USER_KEY') || apiErr.message.includes('ERROR_ZERO_BALANCE')) {
+        return false;
+      }
+      await sleep(3000);
+      continue;
+    }
 
-      // 2. Execute explicit DOM data-callback if defined
-      const cbEls = document.querySelectorAll('[data-callback], .g-recaptcha[data-callback]');
-      cbEls.forEach(el => {
-        const fnName = el.getAttribute('data-callback');
-        if (fnName && typeof window[fnName] === 'function') {
-          try {
-            window[fnName](tok);
-            injected = true;
-          } catch (_) {}
-        }
-      });
+    if (!answer || answer.status !== 1) {
+      console.warn('⚠️ [2Captcha Clicks]: Unsolvable response from 2Captcha in this round.');
+      await sleep(2000);
+      continue;
+    }
 
-      // 3. Deep recursive search inside window.___grecaptcha_cfg
-      if (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients) {
-        const executedCallbacks = new Set();
-        function searchAndTrigger(obj, depth = 0) {
-          if (!obj || depth > 8 || executedCallbacks.size > 2) return;
-          for (const key of Object.keys(obj)) {
-            try {
-              const val = obj[key];
-              if (!val) continue;
-              if (key === 'callback') {
-                if (typeof val === 'function' && !executedCallbacks.has(val)) {
-                  executedCallbacks.add(val);
-                  val(tok);
-                  injected = true;
-                } else if (typeof val === 'string' && typeof window[val] === 'function' && !executedCallbacks.has(window[val])) {
-                  executedCallbacks.add(window[val]);
-                  window[val](tok);
-                  injected = true;
-                }
-              } else if (typeof val === 'object' && val !== null && !Array.isArray(val) && !val.nodeType) {
-                searchAndTrigger(val, depth + 1);
-              }
-            } catch (_) {}
-          }
-        }
+    console.log(`🎉 [2Captcha Clicks]: Solution received for task ID ${answer.id}: "${answer.data}"`);
 
-        for (const cid in window.___grecaptcha_cfg.clients) {
-          searchAndTrigger(window.___grecaptcha_cfg.clients[cid], 0);
-        }
+    if (answer.data === 'No_matching_images') {
+      console.log('ℹ️ [2Captcha Clicks]: No matching images found. Clicking Verify / Skip...');
+      await sleep(randomBetween(800, 1400));
+      await clickRecaptchaVerifyButton(page, frame);
+    } else {
+      const rawClicks = (answer.data || '').replace('click:', '').split('/');
+      const clicks = rawClicks.map(Number).filter(n => !isNaN(n) && n > 0);
+
+      console.log(`🎯 [2Captcha Clicks]: Clicking target tiles: [${clicks.join(', ')}]`);
+
+      for (let i = 0; i < clicks.length; i++) {
+        await sleep(randomBetween(200, 450));
+        await clickAtCoordinates(page, frame, captchaParams.columns, clicks[i]);
       }
 
-      // 4. Unlock disabled submit buttons on the form
-      const submitButtons = document.querySelectorAll(
-        'button[data-test-id="submit-button"], button[type="submit"], input[type="submit"], button.submit-button'
-      );
-      submitButtons.forEach(btn => {
-        btn.removeAttribute('disabled');
-        btn.disabled = false;
-        btn.classList.remove('disabled');
-        btn.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      await sleep(randomBetween(1200, 1800));
+      await clickRecaptchaVerifyButton(page, frame);
+    }
 
-      return injected;
-    }, token);
+    // Wait for DOM update & check if solved
+    await sleep(randomBetween(2500, 3500));
+    const passed = await isRecaptchaPassed(page);
+    if (passed) {
+      console.log('🎉 [2Captcha Clicks]: CAPTCHA challenge successfully solved and verified!');
+      return true;
+    }
+
+    // Check if challenge is still active
+    const stillActive = await isFoundRecaptchaChallengeFrame(page, 3000);
+    if (!stillActive.found) {
+      if (await isRecaptchaPassed(page)) {
+        return true;
+      }
+      break;
+    }
+
+    console.log('🔄 [2Captcha Clicks]: Multi-round challenge continuing with next set of images...');
+    await sleep(1500);
+  }
+
+  return await isRecaptchaPassed(page);
+}
+
+/**
+ * Solves distorted image text CAPTCHA via 2Captcha API
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {string} apiKey
+ * @returns {Promise<boolean>}
+ */
+async function solveImageCaptchaViaApi(page, apiKey) {
+  if (!apiKey || !page) return false;
+  try {
+    const TwoCaptcha = require('@2captcha/captcha-solver');
+    const solver = new TwoCaptcha.Solver(apiKey, 1000);
+
+    console.log('🧩 [2Captcha Engine]: Solving distorted image text CAPTCHA via 2Captcha API...');
+    const base64Img = await page.evaluate(() => {
+      const img = document.querySelector('img#captchaimg, img[src*="Captcha"], img[src*="GetCaptcha"]');
+      if (!img) return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width || 200;
+      canvas.height = img.naturalHeight || img.height || 70;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      return canvas.toDataURL('image/png').replace(/^data:image\/?[A-Za-z]*;base64,/, '');
+    }).catch(() => null);
+
+    if (!base64Img) return false;
+
+    const solution = await solver.imageCaptcha({ body: base64Img });
+    if (solution && solution.data) {
+      console.log(`🎉 [2Captcha Engine]: Image text captcha solved: "${solution.data}"`);
+      const typed = await page.evaluate((val) => {
+        const input = document.querySelector('input#ca, input[name="ca"], input#identifier-captcha-input, input[name="identifier-captcha-input"], input[aria-label*="characters"], input[type="text"]:not([type="email"])');
+        if (input) {
+          input.focus();
+          input.value = val;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+        return false;
+      }, solution.data);
+
+      if (typed) {
+        await sleep(1000);
+        return true;
+      }
+    }
+    return false;
   } catch (err) {
+    console.warn('⚠️ [2Captcha Engine]: Image captcha solve error:', err.message);
     return false;
   }
 }
 
 /**
  * Universal Auto-Solver Orchestrator
- * Checks for CAPTCHA on page, tries Extension first, then API fallback, then graceful countdown.
+ * Checks for CAPTCHA on page, triggers interactive click-based solver, and handles form submission.
  * 
  * @param {import('rebrowser-puppeteer-core').Page} page
  * @param {Object} [options]
  * @param {string} [options.apiKey] 2Captcha API Key
  * @param {boolean} [options.autoSolve=true]
+ * @param {number} [options.timeoutMs]
  * @returns {Promise<{ handled: boolean, solved: boolean, method: string }>}
  */
 async function handlePageCaptcha(page, options = {}) {
@@ -292,72 +620,75 @@ async function handlePageCaptcha(page, options = {}) {
 
   console.log(`\n🛡️ [CAPTCHA Engine]: Detected "${detection.type?.toUpperCase()}" on active page.`);
 
-  // 1. Try 2Captcha Extension first (highest reliability on Google dynamic forms)
-  const extensionSolved = await solveViaExtension(page, 75000);
-  if (extensionSolved) {
-    return { handled: true, solved: true, method: 'extension' };
+  // 1. Resolve autoSolve setting and API key
+  let autoSolve = options.autoSolve;
+  if (autoSolve === undefined && process.env.CAPTCHA_AUTO_SOLVE !== undefined) {
+    autoSolve = process.env.CAPTCHA_AUTO_SOLVE === 'true';
   }
 
-  // 2. Resolve API key from options, environment, or SQLite app_settings
-  let apiKey = options.apiKey || process.env.TWOCAPTCHA_API_KEY || '';
-  if (!apiKey) {
-    try {
-      const { getDatabase } = require('../../database/db');
-      const dbSettings = getDatabase().getSettings();
-      if (dbSettings && dbSettings.captchaAutoSolve !== false && dbSettings.captchaApiKey) {
+  let apiKey = options.apiKey || process.env.TWOCAPTCHA_API_KEY || process.env.APIKEY || '';
+
+  try {
+    const { getDatabase } = require('../../database/db');
+    const dbSettings = getDatabase().getSettings();
+    if (dbSettings) {
+      if (autoSolve === undefined && dbSettings.captchaAutoSolve !== undefined) {
+        autoSolve = dbSettings.captchaAutoSolve !== false;
+      }
+      if (!apiKey && dbSettings.captchaApiKey) {
         apiKey = dbSettings.captchaApiKey;
       }
-    } catch (_) {}
+    }
+  } catch (_) {}
+
+  if (autoSolve === undefined) {
+    autoSolve = true;
   }
 
-  // 3. Try Direct 2Captcha API if API key provided and sitekey resolved
-  if (apiKey && !detection.sitekey && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
-    detection.sitekey = await page.evaluate(() => {
-      const el = document.querySelector('[data-sitekey]');
-      if (el && el.getAttribute('data-sitekey')) return el.getAttribute('data-sitekey');
-      const iframe = document.querySelector('iframe[src*="recaptcha"]');
-      if (iframe && iframe.src) {
-        const m = iframe.src.match(/[?&]k=([^&]+)/);
-        if (m) return m[1];
+  // 2. Execute interactive click-based solver for reCAPTCHA or Google /sorry/ ONLY IF autoSolve is enabled
+  if (autoSolve && apiKey && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
+    const solved = await solveRecaptchaViaClicks(page, apiKey, options);
+    if (solved) {
+      const isSorry = typeof page.url === 'function' && page.url().includes('/sorry/');
+      if (isSorry) {
+        console.log('🚀 [CAPTCHA Engine]: Submitting Google /sorry/ challenge form...');
+        await page.evaluate(() => {
+          const f = document.querySelector('#captcha-form, form[action*="sorry"]');
+          if (f) f.submit();
+        }).catch(() => {});
+        await sleep(3500);
+      } else {
+        await sleep(randomBetween(1500, 2500));
       }
-      return null;
-    }).catch(() => null);
-  }
-
-  if (apiKey && detection.sitekey && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
-    const pageUrl = page.url();
-    const token = await solveRecaptchaViaApi(apiKey, detection.sitekey, pageUrl, 90000);
-    if (token) {
-      const injected = await injectRecaptchaToken(page, token);
-      if (injected) {
-        console.log('✅ [CAPTCHA Engine]: Token injected into form successfully.');
-        const isSorry = page.url().includes('/sorry/');
-        if (isSorry) {
-          console.log('🚀 [CAPTCHA Engine]: Submitting Google /sorry/ challenge form...');
-          await page.evaluate(() => {
-            const f = document.querySelector('#captcha-form, form[action*="sorry"]');
-            if (f) f.submit();
-          }).catch(() => {});
-          await sleep(3500);
-        } else {
-          await sleep(randomBetween(1500, 2500));
-        }
-        return { handled: true, solved: true, method: 'api' };
-      }
+      return { handled: true, solved: true, method: '2captcha_clicks' };
     }
   }
 
-  // 4. Graceful Human Pause fallback (keeps browser open instead of abruptly crashing)
-  console.log('⏳ [CAPTCHA Engine]: Awaiting manual CAPTCHA verification (up to 45s)...');
-  const start = Date.now();
-  while (Date.now() - start < 45000) {
-    const check = await detectCaptcha(page);
-    const u = page.url() || '';
-    if (!check.hasCaptcha || (!u.includes('/sorry/') && !u.includes('recaptcha/api2/bframe'))) {
-      console.log('🎉 [CAPTCHA Engine]: CAPTCHA cleared! Proceeding...');
-      return { handled: true, solved: true, method: 'manual' };
+  // 2.1 Execute Image Text CAPTCHA solver if distorted image present ONLY IF autoSolve is enabled
+  if (autoSolve && apiKey && detection.type === 'image_captcha') {
+    const solved = await solveImageCaptchaViaApi(page, apiKey);
+    if (solved) {
+      return { handled: true, solved: true, method: '2captcha_image' };
     }
-    await sleep(2000);
+  }
+
+  // 3. Graceful Human Pause fallback (keeps browser open if running in headed mode)
+  if (typeof page.$ === 'function') {
+    const timeout = options.timeoutMs || 10000;
+    console.log(`⏳ [CAPTCHA Engine]: Awaiting manual or automated verification (${Math.round(timeout / 1000)}s)...`);
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const check = await detectCaptcha(page);
+      const u = typeof page.url === 'function' ? page.url() : '';
+      const isCleared = !check.hasCaptcha ||
+                        (detection.type === 'google_sorry' && !u.includes('/sorry/')) ||
+                        await isRecaptchaPassed(page);
+      if (isCleared) {
+        console.log('🎉 [CAPTCHA Engine]: CAPTCHA cleared! Proceeding...');
+        return { handled: true, solved: true, method: 'manual' };
+      }
+      await sleep(1000);
+    }
   }
 
   return { handled: false, solved: false, method: 'timeout' };
@@ -365,8 +696,17 @@ async function handlePageCaptcha(page, options = {}) {
 
 module.exports = {
   detectCaptcha,
-  solveViaExtension,
-  solveRecaptchaViaApi,
-  injectRecaptchaToken,
-  handlePageCaptcha
+  isRecaptchaPassed,
+  isFoundRecaptchaChallengeFrame,
+  initCaptchaParamsExtractor,
+  getCaptchaParams,
+  clickAtCoordinates,
+  clickRecaptchaVerifyButton,
+  triggerRecaptchaCheckbox,
+  solveRecaptchaViaClicks,
+  handlePageCaptcha,
+  // Deprecated compatibility stubs for legacy extension/token methods
+  solveViaExtension: async () => false,
+  solveRecaptchaViaApi: async () => null,
+  injectRecaptchaToken: async () => false
 };

@@ -116,6 +116,7 @@ async function runAgentCore(options = {}) {
   let proxyServer = options.proxyServer;
   let headless = options.headless;
   let captchaApiKey = options.captchaApiKey;
+  let captchaAutoSolve = options.captchaAutoSolve;
   const isLast = options.isLast !== undefined ? options.isLast : true;
 
   // AI Options resolution
@@ -156,6 +157,7 @@ async function runAgentCore(options = {}) {
       if (!browserPath) browserPath = settings.browserPath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
       if (headless === undefined) headless = settings.headless || false;
       if (!captchaApiKey && settings.captchaApiKey) captchaApiKey = settings.captchaApiKey;
+      if (captchaAutoSolve === undefined && settings.captchaAutoSolve !== undefined) captchaAutoSolve = settings.captchaAutoSolve !== false;
 
       if (!aiOptions.aiApiKey && settings.aiApiKey) {
         aiOptions = {
@@ -259,14 +261,7 @@ async function runAgentCore(options = {}) {
   const uaManager = new UserAgentManager();
   const startupUa = options.userAgent || uaManager.get_next_user_agent({ os: 'windows', random: true });
 
-  // Dynamic 2Captcha Extension Injection
-  const captchaExtPath = path.resolve(__dirname, 'extensions/2captcha-solver');
-  const extensionArgs = [];
-  if (fs.existsSync(captchaExtPath) && options.loadCaptchaExtension !== false) {
-    extensionArgs.push(`--disable-extensions-except=${captchaExtPath}`);
-    extensionArgs.push(`--load-extension=${captchaExtPath}`);
-    console.log(`🧩 [Agent]: Auto-loaded 2Captcha extension from ${captchaExtPath}`);
-  }
+  // Launch cleanly with Zero-Extension stealth (click-based native solver active)
 
   browserInstance = await puppeteer.launch({
     executablePath: targetExecutable || browserPath,
@@ -277,7 +272,6 @@ async function runAgentCore(options = {}) {
     args: [
       '--start-maximized',
       '--lang=en-US,en',
-      ...extensionArgs,
       ...(cleanProxyServer ? [`--proxy-server=${cleanProxyServer}`] : []),
       `--user-agent=${startupUa}`,
       // WebRTC Leak Protection: Strictly disallow non-proxied UDP lookups
@@ -372,7 +366,9 @@ async function runAgentCore(options = {}) {
         twoFactor,
         getBackupCode,
         smartClick,
-        syncActiveTab
+        syncActiveTab,
+        captchaApiKey,
+        captchaAutoSolve
       });
       if (!isLoginSuccess) {
         throw new Error('Google login could not be completed for account: ' + email);
@@ -391,7 +387,8 @@ async function runAgentCore(options = {}) {
         reportReason,
         aiOptions,
         senderInfo: options.senderInfo,
-        captchaApiKey
+        captchaApiKey,
+        captchaAutoSolve
       });
       if (!repResult || repResult === false || repResult.success === false) {
         throw new Error('Google Maps report execution could not be verified');
@@ -411,7 +408,8 @@ async function runAgentCore(options = {}) {
         reportReason,
         aiOptions,
         senderInfo: options.senderInfo,
-        captchaApiKey
+        captchaApiKey,
+        captchaAutoSolve
       });
       if (!repResult || repResult === false || repResult.success === false) {
         throw new Error('Google Maps report execution could not be verified');

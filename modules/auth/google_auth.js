@@ -615,7 +615,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
     // 1.1 Proactively check for critical Google authentication rejection errors
     const authError = await page.evaluate(() => {
       const text = (document.body.innerText || '').toLowerCase();
-      if (text.includes('couldn’t find your google account') || text.includes("couldn't find your google account") || text.includes('no account found')) {
+      if (text.includes("couldn't find your google account") || text.includes('no account found')) {
         return { type: 'ACCOUNT_NOT_FOUND', description: "Couldn't find your Google Account" };
       }
       if (text.includes('wrong password') || text.includes('wrong password. try again')) {
@@ -638,13 +638,28 @@ async function detectCurrentPageStatus(page, targetEmail) {
         }
         return { type: 'INVALID_BACKUP_CODE', description: 'Backup code was already used or invalid' };
       }
+
+      // Phone verification required — Google is demanding a phone number before continuing.
+      // This account must be skipped; we cannot proceed or bypass this wall.
+      const hasPhoneInput = !!document.querySelector(
+        'input[type="tel"], input[autocomplete="tel"], input[name="phoneNumber"], input[id*="phone"]'
+      );
+      const mentionsPhone = text.includes('enter a phone number') ||
+        text.includes('phone number to get a text') ||
+        text.includes('get a text message') ||
+        text.includes('verify your phone') ||
+        text.includes('confirm your phone') ||
+        (text.includes('verify it') && text.includes('phone'));
+      if (hasPhoneInput && mentionsPhone) {
+        return { type: 'PHONE_VERIFICATION_REQUIRED', description: 'Google is requiring phone number verification — account must be skipped' };
+      }
+
       return null;
     });
 
     if (authError) {
       return authError;
     }
-
     // 2. Check CAPTCHA
     const hasCaptcha = await page.evaluate(() => {
       const text = (document.body.innerText || '').toLowerCase();
@@ -703,6 +718,11 @@ async function detectCurrentPageStatus(page, targetEmail) {
 
     // 6. Post-Login Prompts
     const hasPostLoginPrompt = await page.evaluate(() => {
+      // Guard: g.co/sc page shows a "Next/Continue" button — must NOT be treated as a post-login prompt
+      const bodyText = (document.body.innerText || '').toLowerCase();
+      const isSecurityCodePage = bodyText.includes('g.co/sc') || bodyText.includes('get your security code');
+      if (isSecurityCodePage) return false;
+
       const dismissTexts = ['not now', 'confirm', 'done', 'continue'];
       const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
       for (const b of buttons) {
@@ -712,7 +732,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
       return false;
     });
 
-    if (hasPostLoginPrompt && !url.includes('/challenge/')) {
+    if (hasPostLoginPrompt && !url.includes('/challenge/') && !url.includes('g.co/sc')) {
       return { type: 'POST_LOGIN_PROMPT', description: 'Additional Google prompt (Not now / Confirm)' };
     }
 
@@ -947,7 +967,9 @@ async function ensureGoogleLoggedIn({
   twoFactor,
   getBackupCode,
   smartClick,
-  syncActiveTab
+  syncActiveTab,
+  captchaApiKey,
+  captchaAutoSolve
 }) {
   const click = smartClick || (target => domSmartClick(currentTab, currentCursor, target, syncActiveTab));
 
@@ -988,6 +1010,12 @@ async function ensureGoogleLoggedIn({
       case 'ACCOUNT_LOCKED': {
         console.error(`\n❌ [Auth Critical Error]: ${pageStatus.description}`);
         throw new Error(`Google Authentication Error [${pageStatus.type}]: ${pageStatus.description}`);
+      }
+
+      case 'PHONE_VERIFICATION_REQUIRED': {
+        console.warn(`\n📵 [Phone Wall Detected]: Google is requiring phone verification for "${email}".`);
+        console.warn('⏭️ Skipping this account and moving to the next one...');
+        throw new Error(`PHONE_VERIFICATION_REQUIRED: ${pageStatus.description}`);
       }
 
       case 'INVALID_BACKUP_CODE': {
@@ -1297,7 +1325,28 @@ async function ensureGoogleLoggedIn({
       }
 
       case 'CAPTCHA': {
-        console.log('\n⚠️ [Page Decision] CAPTCHA detected. Waiting for manual resolution...');
+        console.log('\n🧩 [Page Decision] CAPTCHA detected on Google Login! Invoking 2Captcha Auto-Solver...');
+        try {
+          const { handlePageCaptcha } = require('../captcha/captcha_solver');
+          const captchaRes = await handlePageCaptcha(currentTab, {
+            apiKey: captchaApiKey,
+            autoSolve: captchaAutoSolve,
+            timeoutMs: 40000
+          });
+          if (captchaRes.solved) {
+            console.log('🎉 [Google Auth]: CAPTCHA challenge solved successfully!');
+            await sleep(2000);
+            console.log('👉 Clicking Next button to continue sign-in...');
+            await clickGoogleNext(currentTab, 'identifierNext', currentCursor, syncActiveTab).catch(() => {});
+            await sleep(4000);
+            if (syncActiveTab) await syncActiveTab();
+            break;
+          }
+        } catch (cErr) {
+          console.warn('⚠️ [Google Auth]: Notice during CAPTCHA auto-solve:', cErr.message);
+        }
+
+        console.log('⏳ Awaiting CAPTCHA resolution before re-checking...');
         await sleep(5000);
         break;
       }

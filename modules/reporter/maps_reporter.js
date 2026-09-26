@@ -92,7 +92,8 @@ async function executeLegalNoticeFlow({
   cursor,
   smartClick,
   sleep = defaultSleep,
-  captchaApiKey
+  captchaApiKey,
+  captchaAutoSolve
 }) {
   console.log('[Legal Notice] Generating formal removal complaint...');
 
@@ -129,7 +130,8 @@ async function executeLegalNoticeFlow({
     sleep,
     smartClick: smartClick || defaultSmartClick,
     cursor,
-    captchaApiKey
+    captchaApiKey,
+    captchaAutoSolve
   });
 
   return {
@@ -166,7 +168,8 @@ async function runMapsReporter({
   reportReason = 'spam',
   aiOptions = {},
   senderInfo = {},
-  captchaApiKey
+  captchaApiKey,
+  captchaAutoSolve
 }) {
   sleep = sleep || defaultSleep;
   humanScroll = humanScroll || defaultHumanScroll;
@@ -196,7 +199,7 @@ async function runMapsReporter({
       try {
         const { handlePageCaptcha } = require('../captcha/captcha_solver');
         console.log('🧩 [Maps Reporter]: Detected CAPTCHA anomaly. Invoking Auto-Solver...');
-        await handlePageCaptcha(page, { apiKey: captchaApiKey });
+        await handlePageCaptcha(page, { apiKey: captchaApiKey, autoSolve: captchaAutoSolve });
       } catch (_) {}
     }
   }
@@ -410,45 +413,38 @@ async function runMapsReporter({
 
   const reportItemFinder = async (p) => {
     const handle = await p.evaluateHandle(() => {
+      const shareWords = ['share', 'partager', 'compartir', 'teilen', 'condividi', 'ভাগ', 'साझा', 'поделиться', 'del', 'compartilhar', 'bagikan', 'osztás', 'sdílet', 'udostępnij', 'deel'];
+      const reportWords = ['report', 'flag', 'signaler', 'denunciar', 'melden', 'segnala', 'রিপোর্ট', 'शिकायत', 'пожаловаться', 'rapporter', 'informar', 'laporkan', 'jelentés', 'nahlásit', 'zgłoś', 'rapotu'];
+
+      const checkMultiLang = (el) => {
+        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const str = text + ' ' + aria;
+
+        const isShare = shareWords.some(w => str.includes(w));
+        const isReport = reportWords.some(w => str.includes(w));
+        return { isShare, isReport };
+      };
+
       // 1. Direct query on distinct menu items (never container role="menu")
       const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="menuitemradio"], .nbpdpb, li[role="menuitem"]'));
       for (const item of items) {
-        // Exclude containers wrapping multiple menu items
         if (item.querySelectorAll('[role="menuitem"]').length > 1) continue;
         if (item.getAttribute('role') === 'menu') continue;
 
-        const text = (item.innerText || item.textContent || '').trim().toLowerCase();
-        const aria = (item.getAttribute('aria-label') || '').toLowerCase();
-
-        const isShare = text.includes('share') || aria.includes('share');
+        const { isShare, isReport } = checkMultiLang(item);
         if (isShare) continue;
-
-        const isReport = text === 'report review' ||
-                         text === 'report' ||
-                         text === 'flag as inappropriate' ||
-                         text.includes('report review') ||
-                         text.includes('flag as inappropriate') ||
-                         aria.includes('report review') ||
-                         aria.includes('flag as inappropriate');
-
-        if (isReport) {
-          return item;
-        }
+        if (isReport) return item;
       }
 
       // 2. Leaf element search inside open menu
       const allLeaves = Array.from(document.querySelectorAll('[role="menu"] *, div.action-menu *, .fxKbKc *, [role="menuitem"] *'));
       for (const leaf of allLeaves) {
         if (leaf.children.length > 0) continue;
-        const text = (leaf.innerText || leaf.textContent || '').trim().toLowerCase();
-        const aria = (leaf.getAttribute('aria-label') || '').toLowerCase();
 
-        if (text.includes('share') || aria.includes('share')) continue;
-
-        if (text === 'report review' || text === 'report' || text === 'flag as inappropriate' ||
-            aria === 'report review' || aria === 'flag as inappropriate') {
-          return leaf.closest('[role="menuitem"], .nbpdpb, [role="button"]') || leaf;
-        }
+        const { isShare, isReport } = checkMultiLang(leaf);
+        if (isShare) continue;
+        if (isReport) return leaf.closest('[role="menuitem"], .nbpdpb, [role="button"]') || leaf;
       }
 
       // 3. Fallback: text search strictly rejecting anything with "share"
@@ -457,15 +453,9 @@ async function runMapsReporter({
         if (el.getAttribute('role') === 'menu') continue;
         if (el.querySelectorAll('[role="menuitem"]').length > 1) continue;
 
-        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-
-        if (text.includes('share') || aria.includes('share')) continue;
-
-        if (text === 'report review' || aria === 'report review' ||
-            text === 'flag as inappropriate' || aria === 'flag as inappropriate') {
-          return el.closest('[role="menuitem"], .nbpdpb, [role="button"]') || el;
-        }
+        const { isShare, isReport } = checkMultiLang(el);
+        if (isShare) continue;
+        if (isReport) return el.closest('[role="menuitem"], .nbpdpb, [role="button"]') || el;
       }
 
       return null;
@@ -557,7 +547,7 @@ async function runMapsReporter({
       try {
         const { handlePageCaptcha } = require('../captcha/captcha_solver');
         console.log('🧩 [Maps Reporter]: Detected CAPTCHA on report page. Invoking Auto-Solver...');
-        await handlePageCaptcha(reportPage, { apiKey: captchaApiKey });
+        await handlePageCaptcha(reportPage, { apiKey: captchaApiKey, autoSolve: captchaAutoSolve });
       } catch (_) {}
     }
   }
@@ -605,7 +595,8 @@ async function runMapsReporter({
       cursor: reportCursor || cursor,
       smartClick,
       sleep,
-      captchaApiKey
+      captchaApiKey,
+      captchaAutoSolve
     });
 
     console.log('[Legal Notice] Completed.');
@@ -910,7 +901,8 @@ async function runMapsReporter({
       cursor: reportCursor || cursor,
       smartClick,
       sleep,
-      captchaApiKey
+      captchaApiKey,
+      captchaAutoSolve
     });
   }
 
