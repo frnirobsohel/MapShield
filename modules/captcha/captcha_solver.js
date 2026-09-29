@@ -602,13 +602,158 @@ async function solveImageCaptchaViaApi(page, apiKey) {
 }
 
 /**
+ * Direct 2Captcha API Solver for Google reCAPTCHA v2 (Token-based)
+ * Uses native fetch to submit task and poll for g-recaptcha-response token.
+ * 
+ * @param {string} apiKey 2Captcha user API key
+ * @param {string} sitekey Target site key
+ * @param {string} pageUrl Target page URL
+ * @param {number} [timeoutMs=120000]
+ * @returns {Promise<string|null>} Token string or null
+ */
+async function solveRecaptchaViaApi(apiKey, sitekey, pageUrl, timeoutMs = 120000) {
+  if (!apiKey || !sitekey || !pageUrl) return null;
+
+  try {
+    console.log(`🌐 [2Captcha API]: Sending reCAPTCHA task to 2Captcha (sitekey: ${sitekey.slice(0, 10)}...)...`);
+
+    // 1. Submit request
+    const inUrl = `https://2captcha.com/in.php?key=${encodeURIComponent(apiKey)}&method=userrecaptcha&googlekey=${encodeURIComponent(sitekey)}&pageurl=${encodeURIComponent(pageUrl)}&json=1`;
+    const inRes = await fetch(inUrl).then(r => r.json()).catch(() => null);
+
+    if (!inRes || inRes.status !== 1 || !inRes.request) {
+      console.warn('⚠️ [2Captcha API]: Failed to submit CAPTCHA task:', inRes?.request || 'Network error');
+      return null;
+    }
+
+    const taskId = inRes.request;
+    console.log(`⏳ [2Captcha API]: Task submitted (ID: ${taskId}). Awaiting solution...`);
+
+    // 2. Poll for result
+    const startTime = Date.now();
+    await sleep(15000); // 2Captcha reCAPTCHA takes minimum 12-15s
+
+    while (Date.now() - startTime < timeoutMs) {
+      const resUrl = `https://2captcha.com/res.php?key=${encodeURIComponent(apiKey)}&action=get&id=${encodeURIComponent(taskId)}&json=1`;
+      const resJson = await fetch(resUrl).then(r => r.json()).catch(() => null);
+
+      if (resJson && resJson.status === 1 && resJson.request) {
+        console.log('🎉 [2Captcha API]: Token received from 2Captcha successfully!');
+        return resJson.request;
+      }
+
+      if (resJson && resJson.request !== 'CAPCHA_NOT_READY') {
+        console.warn('⚠️ [2Captcha API]: 2Captcha returned response:', resJson.request);
+        return null;
+      }
+
+      await sleep(5000);
+    }
+
+    console.warn('⚠️ [2Captcha API]: Solving timed out after 120s.');
+    return null;
+  } catch (err) {
+    console.error('❌ [2Captcha API]: Error during API solving:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Injects solved reCAPTCHA response token into page DOM and dispatches callbacks
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {string} token
+ * @returns {Promise<boolean>}
+ */
+async function injectRecaptchaToken(page, token) {
+  if (!page || !token || typeof page.evaluate !== 'function') return false;
+
+  try {
+    return await page.evaluate((tok) => {
+      let injected = false;
+
+      // 1. Inject into standard response textareas
+      const textareas = document.querySelectorAll(
+        'textarea[name="g-recaptcha-response"], #g-recaptcha-response, textarea[id*="g-recaptcha"], textarea[name="h-captcha-response"], textarea[name="cf-turnstile-response"]'
+      );
+      textareas.forEach(ta => {
+        ta.innerHTML = tok;
+        ta.value = tok;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+        injected = true;
+      });
+
+      // 2. Execute explicit DOM data-callback if defined
+      const cbEls = document.querySelectorAll('[data-callback], .g-recaptcha[data-callback]');
+      cbEls.forEach(el => {
+        const fnName = el.getAttribute('data-callback');
+        if (fnName && typeof window[fnName] === 'function') {
+          try {
+            window[fnName](tok);
+            injected = true;
+          } catch (_) {}
+        }
+      });
+
+      // 3. Deep recursive search inside window.___grecaptcha_cfg
+      if (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients) {
+        const executedCallbacks = new Set();
+        function searchAndTrigger(obj, depth = 0) {
+          if (!obj || depth > 8 || executedCallbacks.size > 2) return;
+          for (const key of Object.keys(obj)) {
+            try {
+              const val = obj[key];
+              if (!val) continue;
+              if (key === 'callback') {
+                if (typeof val === 'function' && !executedCallbacks.has(val)) {
+                  executedCallbacks.add(val);
+                  val(tok);
+                  injected = true;
+                } else if (typeof val === 'string' && typeof window[val] === 'function' && !executedCallbacks.has(window[val])) {
+                  executedCallbacks.add(window[val]);
+                  window[val](tok);
+                  injected = true;
+                }
+              } else if (typeof val === 'object' && val !== null && !Array.isArray(val) && !val.nodeType) {
+                searchAndTrigger(val, depth + 1);
+              }
+            } catch (_) {}
+          }
+        }
+
+        for (const cid in window.___grecaptcha_cfg.clients) {
+          searchAndTrigger(window.___grecaptcha_cfg.clients[cid], 0);
+        }
+      }
+
+      // 4. Unlock disabled submit buttons on the form
+      const submitButtons = document.querySelectorAll(
+        'button[data-test-id="submit-button"], button[type="submit"], input[type="submit"], button.submit-button'
+      );
+      submitButtons.forEach(btn => {
+        btn.removeAttribute('disabled');
+        btn.disabled = false;
+        btn.classList.remove('disabled');
+        btn.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      return injected;
+    }, token);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
  * Universal Auto-Solver Orchestrator
- * Checks for CAPTCHA on page, triggers interactive click-based solver, and handles form submission.
+ * Checks for CAPTCHA on page, triggers Token API solver for standard web forms (e.g. Legal Form)
+ * or interactive click-based solver for challenges, and handles form submission.
  * 
  * @param {import('rebrowser-puppeteer-core').Page} page
  * @param {Object} [options]
  * @param {string} [options.apiKey] 2Captcha API Key
  * @param {boolean} [options.autoSolve=true]
+ * @param {boolean} [options.preferToken=false] Force direct Token API solving (e.g. for Google Legal Form)
  * @param {number} [options.timeoutMs]
  * @returns {Promise<{ handled: boolean, solved: boolean, method: string }>}
  */
@@ -645,7 +790,58 @@ async function handlePageCaptcha(page, options = {}) {
     autoSolve = true;
   }
 
-  // 2. Execute interactive click-based solver for reCAPTCHA or Google /sorry/ ONLY IF autoSolve is enabled
+  const currentUrl = typeof page.url === 'function' ? page.url() : '';
+  const isLegalForm = options.preferToken === true ||
+                      options.method === 'token' ||
+                      currentUrl.includes('reportcontent.google.com') ||
+                      currentUrl.includes('/contact/lr_');
+
+  // 2. Token-Based API Solver for Standard Web Forms (Google Legal Removal Form, contact forms)
+  if (autoSolve && apiKey && isLegalForm && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
+    console.log('🧩 [CAPTCHA Engine]: Using direct Token API for standard reCAPTCHA form...');
+
+    if (!detection.sitekey && typeof page.evaluate === 'function') {
+      detection.sitekey = await page.evaluate(() => {
+        const el = document.querySelector('[data-sitekey]');
+        if (el && el.getAttribute('data-sitekey')) return el.getAttribute('data-sitekey');
+        const iframes = document.querySelectorAll('iframe[src*="recaptcha"]');
+        for (const iframe of iframes) {
+          if (iframe && iframe.src) {
+            const m = iframe.src.match(/[?&]k=([^&]+)/);
+            if (m) return m[1];
+          }
+        }
+        return null;
+      }).catch(() => null);
+    }
+
+    if (detection.sitekey) {
+      const pageTargetUrl = currentUrl || 'https://reportcontent.google.com';
+      const token = await solveRecaptchaViaApi(apiKey, detection.sitekey, pageTargetUrl, 120000);
+      if (token) {
+        const injected = await injectRecaptchaToken(page, token);
+        if (injected) {
+          console.log('✅ [CAPTCHA Engine]: Token injected into form successfully.');
+          const isSorry = currentUrl.includes('/sorry/');
+          if (isSorry) {
+            console.log('🚀 [CAPTCHA Engine]: Submitting Google /sorry/ challenge form...');
+            await page.evaluate(() => {
+              const f = document.querySelector('#captcha-form, form[action*="sorry"]');
+              if (f) f.submit();
+            }).catch(() => {});
+            await sleep(3500);
+          } else {
+            await sleep(randomBetween(1500, 2500));
+          }
+          return { handled: true, solved: true, method: '2captcha_token' };
+        }
+      } else {
+        console.warn('⚠️ [CAPTCHA Engine]: Token API did not return token; trying click solver fallback...');
+      }
+    }
+  }
+
+  // 3. Execute interactive click-based solver for reCAPTCHA or Google /sorry/ ONLY IF autoSolve is enabled
   if (autoSolve && apiKey && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
     const solved = await solveRecaptchaViaClicks(page, apiKey, options);
     if (solved) {
@@ -664,7 +860,7 @@ async function handlePageCaptcha(page, options = {}) {
     }
   }
 
-  // 2.1 Execute Image Text CAPTCHA solver if distorted image present ONLY IF autoSolve is enabled
+  // 4. Execute Image Text CAPTCHA solver if distorted image present ONLY IF autoSolve is enabled
   if (autoSolve && apiKey && detection.type === 'image_captcha') {
     const solved = await solveImageCaptchaViaApi(page, apiKey);
     if (solved) {
@@ -672,7 +868,7 @@ async function handlePageCaptcha(page, options = {}) {
     }
   }
 
-  // 3. Graceful Human Pause fallback (keeps browser open if running in headed mode)
+  // 5. Graceful Human Pause fallback (keeps browser open if running in headed mode)
   if (typeof page.$ === 'function') {
     const timeout = options.timeoutMs || 10000;
     console.log(`⏳ [CAPTCHA Engine]: Awaiting manual or automated verification (${Math.round(timeout / 1000)}s)...`);
@@ -704,9 +900,9 @@ module.exports = {
   clickRecaptchaVerifyButton,
   triggerRecaptchaCheckbox,
   solveRecaptchaViaClicks,
+  solveRecaptchaViaApi,
+  injectRecaptchaToken,
   handlePageCaptcha,
-  // Deprecated compatibility stubs for legacy extension/token methods
-  solveViaExtension: async () => false,
-  solveRecaptchaViaApi: async () => null,
-  injectRecaptchaToken: async () => false
+  // Deprecated compatibility stubs for legacy extension methods
+  solveViaExtension: async () => false
 };

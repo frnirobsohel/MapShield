@@ -104,9 +104,25 @@ class UserAgentManager {
     }
 
     const isEdge = brandName === 'Microsoft Edge';
-    const ua = isEdge
-      ? `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`
-      : `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+    let ua;
+    let platformName = 'Windows';
+    let platformVer = '10.0.0';
+
+    if (targetOs === 'mac') {
+      ua = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+      platformName = 'macOS';
+      platformVer = '14.0.0';
+    } else if (targetOs === 'linux') {
+      ua = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+      platformName = 'Linux';
+      platformVer = '6.5.0';
+    } else {
+      ua = isEdge
+        ? `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`
+        : `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+      platformName = 'Windows';
+      platformVer = '10.0.0';
+    }
 
     const brands = isEdge ? [
       { brand: 'Microsoft Edge', version: String(major) },
@@ -134,8 +150,8 @@ class UserAgentManager {
       architecture: 'x86',
       bitness: '64',
       model: '',
-      platform: 'Windows',
-      platformVersion: '10.0.0',
+      platform: platformName,
+      platformVersion: platformVer,
       mobile: false,
       fullVersion: full
     };

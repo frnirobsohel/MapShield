@@ -86,7 +86,6 @@ async function syncActiveTab() {
     if (activeUserAgentProfile) {
       await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
     }
-    await currentTab.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => {});
     attachDialogAutoHandler(currentTab);
     await applyDeepStealth(currentTab);
     currentCursor = createCursor(currentTab);
@@ -271,7 +270,6 @@ async function runAgentCore(options = {}) {
     ignoreDefaultArgs: ['--enable-automation'],
     args: [
       '--start-maximized',
-      '--lang=en-US,en',
       ...(cleanProxyServer ? [`--proxy-server=${cleanProxyServer}`] : []),
       `--user-agent=${startupUa}`,
       // WebRTC Leak Protection: Strictly disallow non-proxied UDP lookups
@@ -325,9 +323,8 @@ async function runAgentCore(options = {}) {
     });
   }
 
-  // Strictly apply synchronized UserAgent + ClientHints + Accept-Language
+  // Strictly apply synchronized UserAgent + ClientHints
   await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
-  await currentTab.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => {});
   attachDialogAutoHandler(currentTab);
   await applyDeepStealth(currentTab);
 
@@ -344,7 +341,6 @@ async function runAgentCore(options = {}) {
           if (activeUserAgentProfile) {
             await newPage.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
           }
-          await newPage.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => {});
           await applyDeepStealth(newPage);
           await sleep(1500);
           await syncActiveTab();

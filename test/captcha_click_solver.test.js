@@ -245,3 +245,19 @@ test('legacy stubs: backward compatibility stubs exist and return safe defaults'
   assert.equal(await solveRecaptchaViaApi(), null);
   assert.equal(await injectRecaptchaToken(), false);
 });
+
+test('injectRecaptchaToken: evaluates and injects token into DOM elements safely', async () => {
+  const { injectRecaptchaToken } = require('../modules/captcha/captcha_solver');
+  let injectedToken = null;
+  const mockPage = {
+    evaluate: async (fn, token) => {
+      injectedToken = token;
+      return true;
+    }
+  };
+
+  const res = await injectRecaptchaToken(mockPage, '03AFcWeA_sample_token');
+  assert.equal(res, true);
+  assert.equal(injectedToken, '03AFcWeA_sample_token');
+});
+

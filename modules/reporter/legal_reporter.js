@@ -1068,8 +1068,12 @@ async function fillLegalRemovalForm(activePage, options = {}) {
       if (anomaly.type === 'CAPTCHA') {
         try {
           const { handlePageCaptcha } = require('../captcha/captcha_solver');
-          console.log('🧩 [Legal Form Sync]: Detected CAPTCHA before legal form open. Invoking Auto-Solver...');
-          const cRes = await handlePageCaptcha(activePage, { apiKey: captchaApiKey || options.captchaApiKey, autoSolve: captchaAutoSolve });
+          console.log('🧩 [Legal Form Sync]: Detected CAPTCHA before legal form open. Invoking Auto-Solver (Token API)...');
+          const cRes = await handlePageCaptcha(activePage, {
+            apiKey: captchaApiKey || options.captchaApiKey,
+            autoSolve: captchaAutoSolve,
+            preferToken: true
+          });
           if (cRes.solved) {
             console.log('🎉 [Legal Form Sync]: CAPTCHA bypassed successfully!');
           }
@@ -1384,11 +1388,15 @@ async function fillLegalRemovalForm(activePage, options = {}) {
 
     if (isSubmitDisabled) {
       console.log('ℹ️ Submit button is currently disabled (awaiting reCAPTCHA completion).');
-      console.log('🧩 Triggering CAPTCHA Auto-Solver Engine...');
+      console.log('🧩 Triggering CAPTCHA Auto-Solver Engine (Token API mode)...');
 
       try {
         const { handlePageCaptcha } = require('../captcha/captcha_solver');
-        await handlePageCaptcha(activePage, { apiKey: options.captchaApiKey, autoSolve: captchaAutoSolve });
+        await handlePageCaptcha(activePage, {
+          apiKey: options.captchaApiKey,
+          autoSolve: captchaAutoSolve,
+          preferToken: true
+        });
       } catch (cErr) {
         console.warn('⚠️ CAPTCHA Auto-Solver notice:', cErr.message);
       }
