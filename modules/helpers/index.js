@@ -43,7 +43,10 @@ module.exports = {
   captureErrorScreenshot: screenshotPaths.captureErrorScreenshot,
   getProofScreenshotPath: screenshotPaths.getProofScreenshotPath,
   getErrorScreenshotPath: screenshotPaths.getErrorScreenshotPath,
+  appendActivityLog: screenshotPaths.appendActivityLog,
+  getLatestScreenshot: screenshotPaths.getLatestScreenshot,
   REPORT_LOGS_DIR: screenshotPaths.REPORT_LOGS_DIR,
+  PROJECT_REPORT_LOGS_DIR: screenshotPaths.PROJECT_REPORT_LOGS_DIR,
   PROOFS_DIR: screenshotPaths.PROOFS_DIR,
   ERRORS_DIR: screenshotPaths.ERRORS_DIR,
 

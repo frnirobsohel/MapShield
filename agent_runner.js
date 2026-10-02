@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { getDatabase } = require('./database/db');
 const { isNetworkError } = require('./modules/network');
-const { PROOFS_DIR, ERRORS_DIR } = require('./modules/helpers/screenshot_paths');
+const { PROOFS_DIR, ERRORS_DIR, getLatestScreenshot } = require('./modules/helpers/screenshot_paths');
 
 // Helper to notify Electron parent process (with CLI direct DB fallback)
 function notifyParent(type, data) {
@@ -546,7 +546,8 @@ async function executeQueue() {
         senderInfo,
         captchaApiKey: payload.captchaApiKey || dbSettings.captchaApiKey || undefined,
         captchaAutoSolve: payload.captchaAutoSolve !== undefined ? payload.captchaAutoSolve : (dbSettings.captchaAutoSolve !== false),
-        isLast: i === jobs.length - 1
+        isLast: i === jobs.length - 1,
+        isSubJob: true
       });
       console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
 
@@ -561,7 +562,7 @@ async function executeQueue() {
           reason: currentJob.reason || payload.reportReason || 'spam',
           mode: currentJob.mode || payload.reportType || 'standard',
           error: null,
-          screenshot: 'report_logs/proofs/latest_proof.png',
+          screenshot: getLatestScreenshot('proof'),
           timestamp: new Date().toISOString()
         });
       } catch (e) {
@@ -614,7 +615,7 @@ async function executeQueue() {
             reason: currentJob.reason || payload.reportReason || 'spam',
             mode: currentJob.mode || payload.reportType || 'standard',
             error: err.message || 'Network disconnected',
-            screenshot: 'report_logs/errors/latest_error.png',
+            screenshot: getLatestScreenshot('error'),
             timestamp: new Date().toISOString()
           });
         } catch (e) {
@@ -714,7 +715,7 @@ async function executeQueue() {
           reason: currentJob.reason || payload.reportReason || 'spam',
           mode: currentJob.mode || payload.reportType || 'standard',
           error: err.message || 'Report execution failed',
-          screenshot: 'report_logs/errors/latest_error.png',
+          screenshot: getLatestScreenshot('error'),
           timestamp: new Date().toISOString()
         });
       } catch (e) {

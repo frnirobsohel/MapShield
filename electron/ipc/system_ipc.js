@@ -217,11 +217,24 @@ function registerSystemIpc({ mainWindow, app, getDatabase }) {
 
   ipcMain.handle('folder:openReports', async (_event, subfolder = '') => {
     try {
-      const baseDir = app.isPackaged ? app.getPath('userData') : app.getAppPath();
+      const { REPORT_LOGS_DIR, PROJECT_REPORT_LOGS_DIR } = require(path.join(__dirname, '../../modules/helpers/screenshot_paths'));
       const sanitizedSubfolder = String(subfolder || '').replace(/[^a-zA-Z0-9_-]/g, '');
-      const targetDir = sanitizedSubfolder
-        ? path.join(baseDir, 'report_logs', sanitizedSubfolder)
-        : path.join(baseDir, 'report_logs');
+
+      // Determine primary target directory
+      let targetDir = sanitizedSubfolder
+        ? path.join(REPORT_LOGS_DIR, sanitizedSubfolder)
+        : REPORT_LOGS_DIR;
+
+      // In dev mode, if project folder exists and has files, prefer project folder for user convenience
+      if (PROJECT_REPORT_LOGS_DIR && fs.existsSync(PROJECT_REPORT_LOGS_DIR)) {
+        const projTarget = sanitizedSubfolder
+          ? path.join(PROJECT_REPORT_LOGS_DIR, sanitizedSubfolder)
+          : PROJECT_REPORT_LOGS_DIR;
+        if (fs.existsSync(projTarget) && (!fs.existsSync(targetDir) || fs.readdirSync(targetDir).length === 0)) {
+          targetDir = projTarget;
+        }
+      }
+
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }

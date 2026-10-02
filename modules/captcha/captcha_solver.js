@@ -172,8 +172,30 @@ async function initCaptchaParamsExtractor(frame) {
   if (!frame || typeof frame.evaluate !== 'function') return;
 
   await frame.evaluate(() => {
+    // Waits until an <img> is fully decoded (complete + non-zero natural size),
+    // so we never composite a half-faded / blank replacement tile onto the canvas.
+    window.__waitForTileLoaded = (img, timeoutMs = 4000) => {
+      return new Promise((resolve) => {
+        if (!img) return resolve(false);
+        const isReady = () => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+        if (isReady()) return resolve(true);
+
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          clearInterval(poll);
+          clearTimeout(timer);
+          resolve(ok);
+        };
+        // Poll because reCAPTCHA swaps the <img> src during the fade animation.
+        const poll = setInterval(() => { if (isReady()) finish(true); }, 120);
+        const timer = setTimeout(() => finish(isReady()), timeoutMs);
+      });
+    };
+
     window.getRecaptchaParams = () => {
-      return new Promise((resolve, reject) => {
+      return new Promise(async (resolve, reject) => {
         try {
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
@@ -194,12 +216,15 @@ async function initCaptchaParamsExtractor(frame) {
               return;
             }
 
+            // LOAD-GUARD: base tile must be fully decoded before measuring / drawing.
+            await window.__waitForTileLoaded(initial3x3img);
+
             canvas.width = initial3x3img.naturalWidth || initial3x3img.width || 300;
             canvas.height = initial3x3img.naturalHeight || initial3x3img.height || 300;
             ctx.drawImage(initial3x3img, 0, 0);
 
-            // Handle replacement tiles (fading tiles) in 3x3
-            const updatedTiles = document.querySelectorAll('img.rc-image-tile-11');
+            // Handle replacement tiles (fading tiles) in 3x3 dynamic challenge
+            const updatedTiles = Array.from(document.querySelectorAll('img.rc-image-tile-11'));
             if (updatedTiles.length > 0) {
               const pos = [
                 { x: 0, y: 0 },
@@ -213,7 +238,11 @@ async function initCaptchaParamsExtractor(frame) {
                 { x: (ctx.canvas.width / 3) * 2, y: (ctx.canvas.height / 3) * 2 },
               ];
 
+              // LOAD-GUARD: wait for every replacement tile to finish fading-in first.
+              await Promise.all(updatedTiles.map((t) => window.__waitForTileLoaded(t)));
+
               updatedTiles.forEach((tile) => {
+                if (!(tile.complete && tile.naturalWidth > 0)) return; // skip still-blank tiles
                 const cell = tile.closest('td');
                 const allCells = cell && cell.parentElement && cell.parentElement.parentElement
                   ? Array.from(cell.parentElement.parentElement.querySelectorAll('td'))
@@ -233,6 +262,9 @@ async function initCaptchaParamsExtractor(frame) {
               body: canvas.toDataURL('image/jpeg').replace(/^data:image\/?[A-Za-z]*;base64,/, '')
             });
           } else {
+            // LOAD-GUARD: 4x4 single-image tile.
+            await window.__waitForTileLoaded(img4x4);
+
             canvas.width = img4x4.naturalWidth || img4x4.width || 450;
             canvas.height = img4x4.naturalHeight || img4x4.height || 450;
             ctx.drawImage(img4x4, 0, 0);
@@ -267,6 +299,68 @@ async function getCaptchaParams(frame) {
 }
 
 /**
+ * Detects the active reCAPTCHA image challenge style.
+ *   - 'dynamic'  : "Click verify once there are none left" — tiles fade & are replaced on click.
+ *                  Must NOT verify until 2Captcha returns No_matching_images.
+ *   - 'multi'    : 4x4 "Select all squares with ..." one-shot multi-select.
+ *   - 'oneshot'  : 3x3 single "Select all images with ..." — click all, verify once.
+ * @param {any} frame Puppeteer challenge bframe
+ * @returns {Promise<{ style: 'dynamic'|'multi'|'oneshot', comment: string }>}
+ */
+async function getChallengeType(frame) {
+  if (!frame || typeof frame.evaluate !== 'function') {
+    return { style: 'oneshot', comment: '' };
+  }
+  return await frame.evaluate(() => {
+    const descEl = document.querySelector('.rc-imageselect-desc-wrapper') || document.querySelector('.rc-imageselect-desc');
+    const comment = descEl ? descEl.innerText.replace(/\n+/g, ' ').trim() : '';
+    const lowered = comment.toLowerCase();
+
+    // Dynamic challenge keywords (localized English variants of "Click verify once there are none left")
+    const isDynamic =
+      lowered.includes('none left') ||
+      lowered.includes('once there are none') ||
+      lowered.includes('click verify once') ||
+      !!document.querySelector('.rc-imageselect-desc-no-canonical') ||
+      !!document.querySelector('img.rc-image-tile-11');
+
+    const is4x4 = !!document.querySelector('img.rc-image-tile-44, table.rc-imageselect-table-44');
+
+    if (isDynamic) return { style: 'dynamic', comment };
+    if (is4x4) return { style: 'multi', comment };
+    return { style: 'oneshot', comment };
+  }).catch(() => ({ style: 'oneshot', comment: '' }));
+}
+
+/**
+ * Reads the reCAPTCHA challenge error/validation banner state so the loop can react
+ * instead of blindly clicking Verify.
+ *   - incorrect  : wrong tiles were selected ("Please try again") → challenge reshuffles.
+ *   - selectMore : one-shot needs more selections ("Please select all matching images").
+ *   - dynamicMore: dynamic challenge wants the newly appeared images checked too.
+ * @param {any} frame Puppeteer challenge bframe
+ * @returns {Promise<{ incorrect: boolean, selectMore: boolean, dynamicMore: boolean }>}
+ */
+async function getChallengeErrorState(frame) {
+  const empty = { incorrect: false, selectMore: false, dynamicMore: false };
+  if (!frame || typeof frame.evaluate !== 'function') return empty;
+  return await frame.evaluate(() => {
+    const isVisible = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      return (el.innerText || '').trim().length > 0 || el.offsetParent !== null;
+    };
+    return {
+      incorrect: isVisible('.rc-imageselect-incorrect-response'),
+      selectMore: isVisible('.rc-imageselect-error-select-more') || isVisible('.rc-imageselect-error-select-something'),
+      dynamicMore: isVisible('.rc-imageselect-error-dynamic-more')
+    };
+  }).catch(() => empty);
+}
+
+/**
  * Calculates tile coordinates and performs human-like mouse click
  * @param {import('rebrowser-puppeteer-core').Page} page
  * @param {any} frame
@@ -284,21 +378,44 @@ async function clickAtCoordinates(page, frame, recaptchaSize = 3, number = 1) {
   const boundingBox = await frameHandle.boundingBox().catch(() => null);
   if (!boundingBox) return;
 
-  let x = boundingBox.x;
-  let y = boundingBox.y;
+  let x = null;
+  let y = null;
 
-  if (recaptchaSize === 3) {
-    const col = (number - 1) % 3;
-    const row = Math.floor((number - 1) / 3);
-    x = boundingBox.x + 60 + (col * 130) + randomBetween(-6, 6);
-    y = boundingBox.y + 120 + 65 + (row * 130) + randomBetween(-6, 6);
-  } else if (recaptchaSize === 4) {
-    const col = (number - 1) % 4;
-    const row = Math.floor((number - 1) / 4);
-    const heightTop = 130;
-    const width = 95;
-    x = boundingBox.x + 45 + (col * width) + randomBetween(-5, 5);
-    y = boundingBox.y + 45 + heightTop + (row * width) + randomBetween(-5, 5);
+  // PRIMARY: measure the actual <td> cell rectangle inside the bframe. This is robust
+  // against instruction-text wrapping that shifts the grid up/down (hardcoded offsets drift).
+  if (frame && typeof frame.evaluate === 'function') {
+    const cellRect = await frame.evaluate((idx) => {
+      const table = document.querySelector('table.rc-imageselect-table-33, table.rc-imageselect-table-44, table[class*="rc-imageselect-table"]');
+      if (!table) return null;
+      const cells = Array.from(table.querySelectorAll('td.rc-imageselect-tile, td'));
+      const cell = cells[idx - 1];
+      if (!cell) return null;
+      const r = cell.getBoundingClientRect();
+      if (!r || r.width <= 0 || r.height <= 0) return null;
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    }, number).catch(() => null);
+
+    if (cellRect) {
+      x = boundingBox.x + cellRect.left + (cellRect.width / 2) + randomBetween(-6, 6);
+      y = boundingBox.y + cellRect.top + (cellRect.height / 2) + randomBetween(-6, 6);
+    }
+  }
+
+  // FALLBACK: legacy hardcoded offsets only if the cell rect could not be measured.
+  if (x === null || y === null) {
+    if (recaptchaSize === 3) {
+      const col = (number - 1) % 3;
+      const row = Math.floor((number - 1) / 3);
+      x = boundingBox.x + 60 + (col * 130) + randomBetween(-6, 6);
+      y = boundingBox.y + 120 + 65 + (row * 130) + randomBetween(-6, 6);
+    } else {
+      const col = (number - 1) % 4;
+      const row = Math.floor((number - 1) / 4);
+      const heightTop = 130;
+      const width = 95;
+      x = boundingBox.x + 45 + (col * width) + randomBetween(-5, 5);
+      y = boundingBox.y + 45 + heightTop + (row * width) + randomBetween(-5, 5);
+    }
   }
 
   console.log(`🎯 [2Captcha Clicks]: Clicking tile #${number} (${recaptchaSize}x${recaptchaSize}) at (${Math.round(x)}, ${Math.round(y)})`);
@@ -453,13 +570,18 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
   // 4. Initialize extractor
   await initCaptchaParamsExtractor(frame);
 
-  let isNotSolved = true;
   let attempts = 0;
-  const maxAttempts = options.maxAttempts || 8;
+  const maxAttempts = options.maxAttempts || 12; // dynamic challenges legitimately need more rounds
+  let previousId = null;          // 2Captcha task id to link dynamic continuation rounds
+  let verifyFailures = 0;         // safety guard against infinite verify loops
 
-  while (isNotSolved && attempts < maxAttempts) {
+  while (attempts < maxAttempts) {
     attempts++;
     console.log(`\n⏳ [2Captcha Clicks]: Solving round #${attempts}/${maxAttempts}...`);
+
+    // Re-detect style every round — a one-shot can turn into a dynamic set and vice-versa.
+    const { style } = await getChallengeType(frame);
+    const isDynamic = style === 'dynamic';
 
     let captchaParams;
     try {
@@ -476,18 +598,22 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       break;
     }
 
-    console.log(`🌐 [2Captcha Clicks]: Sending ${captchaParams.columns}x${captchaParams.rows} grid challenge ("${captchaParams.comment}") to 2Captcha API...`);
+    console.log(`🌐 [2Captcha Clicks]: Sending ${captchaParams.columns}x${captchaParams.rows} [${style}] grid ("${captchaParams.comment}") to 2Captcha API...`);
+
+    const gridPayload = {
+      body: captchaParams.body,
+      textinstructions: captchaParams.comment,
+      cols: captchaParams.columns,
+      rows: captchaParams.rows,
+      canSkip: 1,
+      img_type: 'recaptcha'
+    };
+    // For dynamic challenges, link rounds so 2Captcha evaluates the same task continuation.
+    if (isDynamic && previousId) gridPayload.previousId = previousId;
 
     let answer;
     try {
-      answer = await solver.grid({
-        body: captchaParams.body,
-        textinstructions: captchaParams.comment,
-        cols: captchaParams.columns,
-        rows: captchaParams.rows,
-        canSkip: 1,
-        img_type: 'recaptcha'
-      });
+      answer = await solver.grid(gridPayload);
     } catch (apiErr) {
       console.error('❌ [2Captcha Clicks]: 2Captcha API error:', apiErr.message);
       if (apiErr.message.includes('ERROR_WRONG_USER_KEY') || apiErr.message.includes('ERROR_ZERO_BALANCE')) {
@@ -503,45 +629,99 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       continue;
     }
 
+    if (answer.id) previousId = answer.id;
     console.log(`🎉 [2Captcha Clicks]: Solution received for task ID ${answer.id}: "${answer.data}"`);
 
+    // ── Branch A: 2Captcha (NOT our bot) decided there are no more matching tiles ──
     if (answer.data === 'No_matching_images') {
-      console.log('ℹ️ [2Captcha Clicks]: No matching images found. Clicking Verify / Skip...');
-      await sleep(randomBetween(800, 1400));
+      console.log('ℹ️ [2Captcha Clicks]: 2Captcha reports No_matching_images → clicking Verify...');
+      await sleep(randomBetween(700, 1200));
       await clickRecaptchaVerifyButton(page, frame);
-    } else {
-      const rawClicks = (answer.data || '').replace('click:', '').split('/');
-      const clicks = rawClicks.map(Number).filter(n => !isNaN(n) && n > 0);
 
-      console.log(`🎯 [2Captcha Clicks]: Clicking target tiles: [${clicks.join(', ')}]`);
-
-      for (let i = 0; i < clicks.length; i++) {
-        await sleep(randomBetween(200, 450));
-        await clickAtCoordinates(page, frame, captchaParams.columns, clicks[i]);
+      await sleep(randomBetween(2200, 3200));
+      if (await isRecaptchaPassed(page)) {
+        console.log('🎉 [2Captcha Clicks]: CAPTCHA challenge successfully solved and verified!');
+        return true;
       }
 
-      await sleep(randomBetween(1200, 1800));
-      await clickRecaptchaVerifyButton(page, frame);
+      // Verify didn't pass — inspect what reCAPTCHA is asking for.
+      const stillActive = await isFoundRecaptchaChallengeFrame(page, 3000);
+      if (!stillActive.found) {
+        if (await isRecaptchaPassed(page)) return true;
+        break;
+      }
+
+      const errState = await getChallengeErrorState(frame);
+      if (errState.dynamicMore) {
+        console.log('🔄 [2Captcha Clicks]: New images appeared after verify — continuing dynamic rounds...');
+        previousId = null; // fresh image set → new task
+        await sleep(1200);
+        continue;
+      }
+      if (errState.incorrect || errState.selectMore) {
+        console.log('🔄 [2Captcha Clicks]: Verify rejected (incorrect / select-more) — retrying with fresh capture...');
+        previousId = null;
+        verifyFailures++;
+        if (verifyFailures >= 3) break; // give up gracefully
+        await sleep(1200);
+        continue;
+      }
+
+      // No clear signal; loop defensively but bounded by verifyFailures.
+      verifyFailures++;
+      if (verifyFailures >= 3) break;
+      await sleep(1200);
+      continue;
     }
 
-    // Wait for DOM update & check if solved
+    // ── Branch B: 2Captcha returned tiles to click ──
+    const rawClicks = (answer.data || '').replace('click:', '').split('/');
+    const clicks = rawClicks.map(Number).filter(n => !isNaN(n) && n > 0);
+    console.log(`🎯 [2Captcha Clicks]: Clicking target tiles: [${clicks.join(', ')}]`);
+
+    for (let i = 0; i < clicks.length; i++) {
+      await sleep(randomBetween(200, 450));
+      await clickAtCoordinates(page, frame, captchaParams.columns, clicks[i]);
+    }
+
+    if (isDynamic) {
+      // DYNAMIC: do NOT verify here. Clicked tiles fade and are replaced by new images.
+      // Wait for replacements to finish loading, then re-capture and re-send so 2Captcha
+      // can judge the NEW images. Verify happens only when 2Captcha says No_matching_images.
+      console.log('⏳ [2Captcha Clicks]: Dynamic challenge — waiting for replacement tiles to load, then re-capturing...');
+      await sleep(randomBetween(2200, 3400));
+
+      if (await isRecaptchaPassed(page)) return true;
+      const stillActive = await isFoundRecaptchaChallengeFrame(page, 4000);
+      if (!stillActive.found) {
+        if (await isRecaptchaPassed(page)) return true;
+        break;
+      }
+      continue; // loop → re-capture new grid (extractor load-guard blocks on half-faded tiles)
+    }
+
+    // ── ONE-SHOT / MULTI: all tiles selected in one pass, verify once ──
+    await sleep(randomBetween(1200, 1800));
+    await clickRecaptchaVerifyButton(page, frame);
+
     await sleep(randomBetween(2500, 3500));
-    const passed = await isRecaptchaPassed(page);
-    if (passed) {
+    if (await isRecaptchaPassed(page)) {
       console.log('🎉 [2Captcha Clicks]: CAPTCHA challenge successfully solved and verified!');
       return true;
     }
 
-    // Check if challenge is still active
     const stillActive = await isFoundRecaptchaChallengeFrame(page, 3000);
     if (!stillActive.found) {
-      if (await isRecaptchaPassed(page)) {
-        return true;
-      }
+      if (await isRecaptchaPassed(page)) return true;
       break;
     }
 
-    console.log('🔄 [2Captcha Clicks]: Multi-round challenge continuing with next set of images...');
+    // A one-shot may issue a new image set, convert to dynamic, or report "select more".
+    const errState = await getChallengeErrorState(frame);
+    if (errState.incorrect) console.log('🔄 [2Captcha Clicks]: Incorrect — new image set issued, retrying...');
+    else if (errState.selectMore || errState.dynamicMore) console.log('🔄 [2Captcha Clicks]: More selections required, continuing...');
+    else console.log('🔄 [2Captcha Clicks]: Multi-round challenge continuing with next set of images...');
+    previousId = null;
     await sleep(1500);
   }
 
@@ -896,6 +1076,8 @@ module.exports = {
   isFoundRecaptchaChallengeFrame,
   initCaptchaParamsExtractor,
   getCaptchaParams,
+  getChallengeType,
+  getChallengeErrorState,
   clickAtCoordinates,
   clickRecaptchaVerifyButton,
   triggerRecaptchaCheckbox,

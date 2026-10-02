@@ -567,22 +567,36 @@ class DatabaseService {
   }
 
   // --- AUDIT LOGS OPERATIONS ---
-  recordAuditLog(entry) {
+  recordAuditLog(entry = {}) {
+    const ts = entry.timestamp || new Date().toISOString();
+    const errStr = entry.error ? (entry.error.message || String(entry.error)) : null;
+    const screenshotStr = entry.screenshot ? String(entry.screenshot) : null;
     const stmt = this.db.prepare(`
       INSERT INTO report_audit_logs (url, email, proxy, status, reason, mode, error, screenshot, timestamp)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
-      entry.url || '',
-      entry.email || '',
-      entry.proxy || '',
-      entry.status || 'completed',
-      entry.reason || 'spam',
-      entry.mode || 'standard',
-      entry.error || null,
-      entry.screenshot || null,
-      entry.timestamp || new Date().toISOString()
+      String(entry.url || ''),
+      entry.email ? String(entry.email) : null,
+      entry.proxy ? String(entry.proxy) : null,
+      String(entry.status || 'completed'),
+      String(entry.reason || 'spam'),
+      String(entry.mode || 'standard'),
+      errStr,
+      screenshotStr,
+      ts
     );
+
+    // Persist human-readable audit entry to activity.log and reports_history.csv
+    try {
+      const { appendActivityLog } = require('../modules/helpers/screenshot_paths');
+      appendActivityLog({
+        ...entry,
+        error: errStr,
+        screenshot: screenshotStr,
+        timestamp: ts
+      });
+    } catch (_) {}
   }
 
   getAuditLogs(limit = 100) {

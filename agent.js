@@ -414,6 +414,26 @@ async function runAgentCore(options = {}) {
 
     console.log('\nTask completed successfully for: ' + reviewUrl);
     console.log('Holding browser open for confirmation before exiting...');
+
+    // Standalone CLI execution audit log persistence
+    if (!process.send && !options.isSubJob) {
+      try {
+        const { getDatabase } = require('./database/db');
+        const { getLatestScreenshot } = require('./modules/helpers/screenshot_paths');
+        getDatabase().recordAuditLog({
+          url: reviewUrl,
+          email: email || null,
+          proxy: proxyServer || null,
+          status: 'completed',
+          reason: reportReason || 'spam',
+          mode: reportType || 'standard',
+          error: null,
+          screenshot: getLatestScreenshot('proof'),
+          timestamp: new Date().toISOString()
+        });
+      } catch (_) {}
+    }
+
     await sleep(5000);
 
   } catch (error) {
@@ -429,6 +449,26 @@ async function runAgentCore(options = {}) {
     if (currentTab) {
       await captureErrorScreenshot(currentTab, 'agent_error').catch(() => {});
     }
+
+    // Standalone CLI execution audit log persistence on failure
+    if (!process.send && !options.isSubJob) {
+      try {
+        const { getDatabase } = require('./database/db');
+        const { getLatestScreenshot } = require('./modules/helpers/screenshot_paths');
+        getDatabase().recordAuditLog({
+          url: reviewUrl,
+          email: email || null,
+          proxy: proxyServer || null,
+          status: isNetworkError(finalError) ? 'network_error' : 'failed',
+          reason: reportReason || 'spam',
+          mode: reportType || 'standard',
+          error: finalError.message || 'Execution failed',
+          screenshot: getLatestScreenshot('error'),
+          timestamp: new Date().toISOString()
+        });
+      } catch (_) {}
+    }
+
     throw finalError;
   } finally {
     if (browserInstance) {
