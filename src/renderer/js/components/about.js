@@ -525,8 +525,10 @@
       const el = document.getElementById(elId);
       if (!el) return;
       el.textContent = msg;
-      el.className = isError ? 'toast-msg show toast-danger' : 'toast-msg show toast-success';
-      setTimeout(() => {
+      el.className = 'toast-msg ' + (isError ? 'error' : 'success');
+      clearTimeout(el._toastTimer);
+      el._toastTimer = setTimeout(() => {
+        el.textContent = '';
         el.className = 'toast-msg';
       }, 4000);
     }
@@ -567,19 +569,25 @@
           try {
             const clip = await navigator.clipboard.readText();
             if (clip) licInput.value = clip.trim();
-          } catch (e) {}
+            else this.showToast('licNotification', 'Clipboard is empty.', true);
+          } catch (e) {
+            this.showToast('licNotification', 'Could not read clipboard. Paste manually (Ctrl+V).', true);
+          }
         });
       }
 
       const btnCopyKey = document.getElementById('btnCopyActiveKey');
       if (btnCopyKey) {
         btnCopyKey.addEventListener('click', async () => {
-          if (this.license?.license_key) {
+          if (!this.license?.license_key) return;
+          try {
             await navigator.clipboard.writeText(this.license.license_key);
             btnCopyKey.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" style="width: 12px; height: 12px;"><polyline points="20 6 9 17 4 12"/></svg>';
             setTimeout(() => {
               btnCopyKey.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
             }, 1500);
+          } catch (e) {
+            this.showToast('licNotification', 'Could not copy license key.', true);
           }
         });
       }
@@ -587,11 +595,15 @@
       const btnCopyDevId = document.getElementById('btnCopyMachineId');
       if (btnCopyDevId) {
         btnCopyDevId.addEventListener('click', async () => {
-          await navigator.clipboard.writeText(this.deviceId);
-          btnCopyDevId.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" style="width: 11px; height: 11px;"><polyline points="20 6 9 17 4 12"/></svg>';
-          setTimeout(() => {
-            btnCopyDevId.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 11px; height: 11px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-          }, 1500);
+          try {
+            await navigator.clipboard.writeText(this.deviceId || '');
+            btnCopyDevId.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" style="width: 11px; height: 11px;"><polyline points="20 6 9 17 4 12"/></svg>';
+            setTimeout(() => {
+              btnCopyDevId.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 11px; height: 11px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+            }, 1500);
+          } catch (e) {
+            this.showToast('licNotification', 'Could not copy machine ID.', true);
+          }
         });
       }
 

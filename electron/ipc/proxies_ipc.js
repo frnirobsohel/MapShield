@@ -178,15 +178,25 @@ function testProxyPing(proxyOrHost, portOrTimeout = 3500, timeoutMs = 3500) {
         req.destroy();
         if (!httpFinished) {
           httpFinished = true;
-          resolve({ success: true, latency: `${tcpLatency}ms`, status: 'ready' });
+          resolve({
+            success: false,
+            latency: `${tcpLatency}ms`,
+            status: 'failed',
+            error: 'HTTP proxy request timed out'
+          });
         }
       });
 
-      req.on('error', () => {
+      req.on('error', (err) => {
         req.destroy();
         if (!httpFinished) {
           httpFinished = true;
-          resolve({ success: true, latency: `${tcpLatency}ms`, status: 'ready' });
+          resolve({
+            success: false,
+            latency: `${tcpLatency}ms`,
+            status: 'failed',
+            error: err?.code || err?.message || 'HTTP proxy request failed'
+          });
         }
       });
 

@@ -398,6 +398,7 @@ async function extractGoogleProfileName(page) {
       if (!extractedName) {
         const frames = page.frames();
         for (const frame of frames) {
+          if (!frame || (typeof frame.isDetached === 'function' && frame.isDetached())) continue;
           try {
             const frameUrl = frame.url();
             if (frameUrl.includes('accounts.google.com') || frameUrl.includes('myaccount') || frame.name() === 'account') {
@@ -793,13 +794,46 @@ async function walkthroughTroubleshooter(page, options = {}) {
   console.log('\n[Stage 1] Google Legal Troubleshooter (1114905)...');
 
   try {
-    const currentUrl = page.url();
+    let currentUrl = (typeof page.url === 'function' ? page.url() : '') || '';
+    if (!currentUrl.includes('/troubleshooter/1114905')) {
+      // Check if browser already has an open tab at the troubleshooter URL
+      const activeBrowser = typeof page.browser === 'function' ? page.browser() : null;
+      if (activeBrowser) {
+        const pages = await activeBrowser.pages().catch(() => []);
+        const existingTs = pages.find(p => (p.url() || '').includes('1114905'));
+        if (existingTs) {
+          page = existingTs;
+          await page.bringToFront().catch(() => {});
+          currentUrl = page.url();
+        }
+      }
+    }
+
     if (!currentUrl.includes('/troubleshooter/1114905')) {
       console.log(`🌐 Navigating to Troubleshooter: ${TROUBLESHOOTER_URL}`);
-      await page.goto(TROUBLESHOOTER_URL, {
-        waitUntil: 'networkidle2',
-        timeout: 45000
-      });
+      try {
+        await page.goto(TROUBLESHOOTER_URL, {
+          waitUntil: 'networkidle2',
+          timeout: 45000
+        });
+      } catch (navErr) {
+        if (navErr.message.includes('Navigating frame was detached') || navErr.message.includes('detached Frame')) {
+          console.warn('⚠️ Frame detached during initial navigation; checking open tabs or recovering on primary tab...');
+          const activeBrowser = typeof page.browser === 'function' ? page.browser() : null;
+          if (activeBrowser) {
+            const pages = await activeBrowser.pages().catch(() => []);
+            const matched = pages.find(p => (p.url() || '').includes('1114905'));
+            if (matched) {
+              page = matched;
+            } else if (pages.length > 0) {
+              page = pages[0];
+              await page.goto(TROUBLESHOOTER_URL, { waitUntil: 'networkidle2', timeout: 45000 }).catch(() => {});
+            }
+          }
+        } else {
+          throw navErr;
+        }
+      }
       await sleep(randomBetween(1500, 2500));
     }
 
@@ -1522,7 +1556,7 @@ Target Review URL: ${reviewUrl}
 Complainant:       ${fullName}
 Country:           ${country}
 Date Filed:        ${new Date().toUTCString()}
-Status:            ${(submitClicked || successConfirmed) ? 'SUBMITTED_AND_CONFIRMED' : 'PREPARED_UNSUBMITTED'}
+Status:            ${successConfirmed ? 'SUBMITTED_AND_CONFIRMED' : (submitClicked ? 'SUBMITTED_UNCONFIRMED' : 'PREPARED_UNSUBMITTED')}
 Official Report ID:${extractedReportId ? ' ' + extractedReportId : ' N/A'}
 ===============================================================
 
@@ -1544,7 +1578,8 @@ Proof Screenshot: ${screenshotPath}
     console.log(`💾 Legal Notice Dossier archived: legal_notices/notice_${timestamp}.txt`);
 
     return {
-      success: successConfirmed || !!submitClicked,
+      // Only treat as success when Google's confirmation / success page is verified
+      success: !!successConfirmed,
       submitted: !!submitClicked,
       reportId: extractedReportId,
       proofScreenshot: screenshotPath,

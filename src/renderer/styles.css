@@ -673,6 +673,7 @@ select:focus {
   padding: 4px;
   border-radius: var(--radius-xs);
   transition: color 0.15s ease;
+  z-index: 2;
 }
 
 .btn-eye:hover {
@@ -2410,6 +2411,8 @@ input:checked + .slider:before {
 .eye-toggle-btn {
   position: absolute;
   right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -2418,6 +2421,7 @@ input:checked + .slider:before {
   justify-content: center;
   padding: 4px;
   color: var(--text-muted);
+  z-index: 2;
 }
 .eye-toggle-btn:hover { color: #fff; }
 

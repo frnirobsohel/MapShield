@@ -25,7 +25,12 @@ window.UIHelpers = {
     }, 4000);
   },
 
-  formatTime(date = new Date()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  formatTime(val = new Date()) {
+    if (!val) return '—';
+    const d = val instanceof Date ? val : new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    return String(val);
   }
 };

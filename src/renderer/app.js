@@ -86,8 +86,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Minimalist Web Application SVG Icons
   const SVG_ICONS = {
-    eye: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
-    eyeOff: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
+    eye: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+    eyeOff: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
     edit: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`,
     trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`,
     ping: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>`,
@@ -141,7 +141,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Search & Filter Toolbar Elements
   const accountSearchInput = document.getElementById('accountSearchInput');
   const btnClearSearch = document.getElementById('btnClearSearch');
-  const filterTabs = document.querySelectorAll('.filter-tab');
+  // Scope to Account tab only — bare `.filter-tab` also matches Link/Proxy/mode tabs
+  const filterTabs = document.querySelectorAll('#tab-account .sheet-filter-tabs [data-filter]');
   const filterCountAll = document.getElementById('filterCountAll');
   const filterCountUnused = document.getElementById('filterCountUnused');
   const filterCountUsed = document.getElementById('filterCountUsed');
@@ -345,19 +346,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.desktopAPI?.openReportsFolder?.('errors');
   });
 
-  btnToggleAiKey?.addEventListener('click', () => {
+  btnToggleAiKey?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!inputAiKey) return;
     inputAiKey.type = inputAiKey.type === 'password' ? 'text' : 'password';
-    btnToggleAiKey.innerHTML = inputAiKey.type === 'password' ? SVG_ICONS.eye : SVG_ICONS.eyeOff;
+    const hidden = inputAiKey.type === 'password';
+    btnToggleAiKey.innerHTML = hidden ? SVG_ICONS.eye : SVG_ICONS.eyeOff;
+    btnToggleAiKey.title = hidden ? 'Show API key' : 'Hide API key';
   });
 
   // AI Provider Handler
   selectAiProvider?.addEventListener('change', () => {
     const provider = selectAiProvider.value;
-    selectAiModel.innerHTML = '';
+    if (selectAiModel) selectAiModel.innerHTML = '';
     let models = [];
     
     if (provider === 'gemini') {
-      labelAiKey.textContent = 'Google Gemini API Key';
+      if (labelAiKey) labelAiKey.textContent = 'Google Gemini API Key';
       if (aiBadge) { aiBadge.textContent = 'Gemini Powered'; aiBadge.className = 'badge badge-purple'; }
       models = [
         { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fastest & Recommended)' },
@@ -365,21 +371,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' }
       ];
     } else if (provider === 'openai') {
-      labelAiKey.textContent = 'OpenAI API Key';
+      if (labelAiKey) labelAiKey.textContent = 'OpenAI API Key';
       if (aiBadge) { aiBadge.textContent = 'ChatGPT Powered'; aiBadge.className = 'badge badge-emerald'; }
       models = [
         { value: 'gpt-4o', label: 'GPT-4o (Recommended)' },
         { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fastest)' }
       ];
     } else if (provider === 'anthropic') {
-      labelAiKey.textContent = 'Anthropic API Key';
+      if (labelAiKey) labelAiKey.textContent = 'Anthropic API Key';
       if (aiBadge) { aiBadge.textContent = 'Claude Powered'; aiBadge.className = 'badge badge-amber'; }
       models = [
         { value: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet (Recommended)' },
         { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
       ];
     } else if (provider === 'deepseek') {
-      labelAiKey.textContent = 'DeepSeek API Key';
+      if (labelAiKey) labelAiKey.textContent = 'DeepSeek API Key';
       if (aiBadge) { aiBadge.textContent = 'DeepSeek Powered'; aiBadge.className = 'badge badge-blue'; }
       models = [
         { value: 'deepseek-chat', label: 'DeepSeek Chat (Recommended)' },
@@ -387,6 +393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       ];
     }
 
+    if (!selectAiModel) return;
     models.forEach((m, idx) => {
       const opt = document.createElement('option');
       opt.value = m.value;
@@ -545,13 +552,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (statusFilter === 'used' && !acc.used) return false;
       if (statusFilter === 'failed' && acc.status !== 'failed' && !acc.lastError) return false;
 
-      // 2. Search Query
+      // 2. Search Query (matches placeholder: email, password, 2FA, backup, error)
       if (q) {
         const em = (acc.email || '').toLowerCase();
+        const pw = (acc.password || '').toLowerCase();
         const two = (acc.twoFactor || '').toLowerCase();
         const bc = (acc.backupCode || '').toLowerCase();
         const err = (acc.lastError || '').toLowerCase();
-        return em.includes(q) || two.includes(q) || bc.includes(q) || err.includes(q);
+        return em.includes(q) || pw.includes(q) || two.includes(q) || bc.includes(q) || err.includes(q);
       }
       return true;
     });
@@ -1218,8 +1226,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (confirm('Clear cached Google login profile (chrome_session)? You will need to log in again.')) {
       if (window.desktopAPI) {
         const res = await window.desktopAPI.clearSession();
-        alert(res.message);
-        await checkSessionStatus();
+        if (res?.success) {
+          alert(res.message || 'Session cleared.');
+          await checkSessionStatus();
+        } else {
+          alert(res?.error || res?.message || 'Session clear failed.');
+        }
       }
     }
   });
@@ -1799,9 +1811,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       proxySpan.style.cursor = 'pointer';
       proxySpan.title = `Click to copy proxy: ${rawString}`;
       proxySpan.textContent = `${prx.host}:${prx.port}`;
-      proxySpan.addEventListener('click', () => {
-        navigator.clipboard.writeText(rawString);
-        showToast(proxyToast, `Copied to clipboard: ${rawString}`);
+      proxySpan.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(rawString);
+          showToast(proxyToast, `Copied to clipboard: ${rawString}`);
+        } catch (_) {
+          showToast(proxyToast, 'Could not copy to clipboard.', false);
+        }
       });
       tdProxy.appendChild(proxySpan);
       tr.appendChild(tdProxy);
@@ -1859,10 +1875,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       copyInlineBtn.title = 'Copy full string';
       copyInlineBtn.innerHTML = SVG_ICONS.copy;
       copyInlineBtn.style.flexShrink = '0';
-      copyInlineBtn.addEventListener('click', (e) => {
+      copyInlineBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(rawString);
-        showToast(proxyToast, `Copied: ${rawString}`);
+        try {
+          await navigator.clipboard.writeText(rawString);
+          showToast(proxyToast, `Copied: ${rawString}`);
+        } catch (_) {
+          showToast(proxyToast, 'Could not copy to clipboard.', false);
+        }
       });
       stringWrap.appendChild(copyInlineBtn);
       tdString.appendChild(stringWrap);
@@ -1929,10 +1949,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       btnCopy.className = 'sheet-icon-btn';
       btnCopy.title = 'Copy proxy (ip:port:user:pass)';
       btnCopy.innerHTML = SVG_ICONS.copy;
-      btnCopy.addEventListener('click', (e) => {
+      btnCopy.addEventListener('click', async (e) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(rawString);
-        showToast(proxyToast, `Copied: ${rawString}`);
+        try {
+          await navigator.clipboard.writeText(rawString);
+          showToast(proxyToast, `Copied: ${rawString}`);
+        } catch (_) {
+          showToast(proxyToast, 'Could not copy to clipboard.', false);
+        }
       });
       actionWrap.appendChild(btnCopy);
 
@@ -2060,9 +2084,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Pagination Event Listeners
   btnProxyPageFirst?.addEventListener('click', () => { proxyCurrentPage = 1; renderProxiesTable(); });
   btnProxyPagePrev?.addEventListener('click', () => { if (proxyCurrentPage > 1) { proxyCurrentPage--; renderProxiesTable(); } });
-  btnProxyPageNext?.addEventListener('click', () => { proxyCurrentPage++; renderProxiesTable(); });
+  btnProxyPageNext?.addEventListener('click', () => {
+    const totalPages = Math.max(1, Math.ceil(getFilteredProxies().length / proxyPageSize));
+    if (proxyCurrentPage < totalPages) {
+      proxyCurrentPage++;
+      renderProxiesTable();
+    }
+  });
   btnProxyPageLast?.addEventListener('click', () => {
-    const totalPages = Math.ceil(getFilteredProxies().length / proxyPageSize);
+    const totalPages = Math.max(1, Math.ceil(getFilteredProxies().length / proxyPageSize));
     proxyCurrentPage = totalPages;
     renderProxiesTable();
   });
@@ -3232,6 +3262,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // --- Automation Start / Stop Execution ---
   let isRunning = false;
+  let userRequestedStop = false;
+  let stopFinishFallbackTimer = null;
+  // Default report mode for legacy save paths (must always be defined)
+  let currentReportType = 'standard';
 
   async function triggerStartAgent() {
     if (isRunning) return;
@@ -3305,7 +3339,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     appendLogToBothTerminals(`[System] Target Review Links: ${urls.length} (Mixed Modes)`);
     appendLogToBothTerminals(`[System] Browser: ${chosenBrowserName}`);
     const activeReason = loadedLinks[0]?.reason || selectCategory?.value || 'spam';
-    const activeMode = loadedLinks[0]?.mode || currentReportType;
+    const activeMode = loadedLinks[0]?.mode || currentReportType || 'standard';
     const modeLabel = activeMode === 'both'
       ? '🛡️ Standard Report + ⚖️ AI Legal Notice (Dual)'
       : (activeMode === 'legal' ? '⚖️ Report a Legal Notice' : '🛡️ Standard Policy Violation');
@@ -3357,10 +3391,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnDashStop) btnDashStop.disabled = true;
     if (btnControlStop) btnControlStop.disabled = true;
 
+    userRequestedStop = true;
+    updateProgressText('Stopping agent...', 95);
+
+    let stopRes = null;
     if (window.desktopAPI) {
-      await window.desktopAPI.stopAgent();
+      stopRes = await window.desktopAPI.stopAgent();
     }
-    finishExecution();
+
+    // If nothing was running, finish immediately; otherwise wait for agent:finished
+    if (!stopRes || stopRes.message === 'No active agent to stop.') {
+      finishExecution('Execution stopped');
+      return;
+    }
+
+    if (stopFinishFallbackTimer) clearTimeout(stopFinishFallbackTimer);
+    stopFinishFallbackTimer = setTimeout(() => {
+      if (isRunning) {
+        finishExecution(userRequestedStop ? 'Execution stopped' : 'Execution completed');
+      }
+    }, 10000);
   }
 
   function setRunUIState(running) {
@@ -3394,10 +3444,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (controlProgressBar) controlProgressBar.style.width = Math.min(100, Math.max(0, pct)) + '%';
   }
 
-  function finishExecution() {
+  function finishExecution(statusText) {
+    if (stopFinishFallbackTimer) {
+      clearTimeout(stopFinishFallbackTimer);
+      stopFinishFallbackTimer = null;
+    }
+    const wasStop = userRequestedStop;
+    userRequestedStop = false;
     isRunning = false;
     setRunUIState(false);
-    updateProgressText('Execution completed', 100);
+    updateProgressText(
+      statusText || (wasStop ? 'Execution stopped' : 'Execution completed'),
+      100
+    );
     checkSessionStatus();
     updateDashboardMetrics();
   }
@@ -3441,8 +3500,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window.desktopAPI.onFinished((data) => {
       const exitCode = (data && data.code !== undefined && data.code !== null) ? data.code : 0;
-      appendLogToBothTerminals(`\n[System] Task execution completed (exit code: ${exitCode}).`);
-      finishExecution();
+      const stopped = userRequestedStop;
+      appendLogToBothTerminals(
+        stopped
+          ? `\n[System] Agent stopped (exit code: ${exitCode}).`
+          : `\n[System] Task execution completed (exit code: ${exitCode}).`
+      );
+      finishExecution(stopped ? 'Execution stopped' : 'Execution completed');
     });
 
     if (window.desktopAPI.onAccountUpdate) {

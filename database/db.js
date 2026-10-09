@@ -57,7 +57,10 @@ class DatabaseService {
     // High performance PRAGMAs for desktop reliability
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA synchronous = NORMAL;');
-    this.db.exec('PRAGMA busy_timeout = 5000;');
+    this.db.exec('PRAGMA busy_timeout = 10000;');
+    this.db.exec('PRAGMA cache_size = -64000;');
+    this.db.exec('PRAGMA temp_store = MEMORY;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
 
     // Create Tables if not exist
     this.db.exec(`
@@ -67,6 +70,7 @@ class DatabaseService {
         password TEXT,
         twoFactor TEXT,
         backupCode TEXT,
+        recoveryEmail TEXT,
         used INTEGER DEFAULT 0,
         usedCount INTEGER DEFAULT 0,
         lastUsedAt TEXT,
@@ -133,6 +137,8 @@ class DatabaseService {
     // Ensure businessName and country columns exist for review_links in existing databases
     try { this.db.exec('ALTER TABLE review_links ADD COLUMN businessName TEXT;'); } catch (_) {}
     try { this.db.exec('ALTER TABLE review_links ADD COLUMN country TEXT;'); } catch (_) {}
+    try { this.db.exec('ALTER TABLE accounts ADD COLUMN recoveryEmail TEXT;'); } catch (_) {}
+    try { this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_proxies_formatted ON proxies(formatted);'); } catch (_) {}
 
     // Auto-migrate from JSON files if database tables are empty
     this.autoMigrateFromJson();
@@ -252,6 +258,7 @@ class DatabaseService {
       password: decrypt(r.password),
       twoFactor: decrypt(r.twoFactor),
       backupCode: decrypt(r.backupCode),
+      recoveryEmail: decrypt(r.recoveryEmail),
       used: Boolean(r.used),
       usedCount: r.usedCount || 0
     }));
@@ -266,20 +273,31 @@ class DatabaseService {
         .filter(Boolean);
 
       if (incomingEmails.length > 0) {
-        const placeholders = incomingEmails.map(() => '?').join(',');
-        const deleteStmt = this.db.prepare(`DELETE FROM accounts WHERE LOWER(email) NOT IN (${placeholders})`);
-        deleteStmt.run(...incomingEmails);
+        // Chunk deletion to prevent SQLite SQL variable limit (>999)
+        const keepSet = new Set(incomingEmails);
+        const allExisting = this.db.prepare('SELECT email FROM accounts').all();
+        const toDelete = allExisting
+          .map(r => r.email)
+          .filter(e => !keepSet.has(String(e).trim().toLowerCase()));
+
+        const chunkSize = 500;
+        for (let c = 0; c < toDelete.length; c += chunkSize) {
+          const slice = toDelete.slice(c, c + chunkSize);
+          const placeholders = slice.map(() => '?').join(',');
+          this.db.prepare(`DELETE FROM accounts WHERE email IN (${placeholders})`).run(...slice);
+        }
       } else {
         this.db.exec('DELETE FROM accounts;');
       }
 
       const stmt = this.db.prepare(`
-        INSERT INTO accounts (id, email, password, twoFactor, backupCode, used, usedCount, lastUsedAt, status, lastError, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO accounts (id, email, password, twoFactor, backupCode, used, usedCount, lastUsedAt, status, lastError, updatedAt, recoveryEmail)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(email) DO UPDATE SET
           password = excluded.password,
           twoFactor = excluded.twoFactor,
           backupCode = excluded.backupCode,
+          recoveryEmail = COALESCE(excluded.recoveryEmail, accounts.recoveryEmail),
           used = excluded.used,
           usedCount = CASE WHEN excluded.status = 'active' AND excluded.usedCount = 0 THEN 0 WHEN excluded.usedCount > 0 THEN excluded.usedCount ELSE accounts.usedCount END,
           lastUsedAt = COALESCE(excluded.lastUsedAt, accounts.lastUsedAt),
@@ -302,7 +320,8 @@ class DatabaseService {
           a.lastUsedAt || null,
           a.status || 'ready',
           a.lastError || a.error || null,
-          new Date().toISOString()
+          new Date().toISOString(),
+          encrypt(a.recoveryEmail || a.recovery_email || '')
         );
       }
       this.db.exec('COMMIT;');
@@ -310,6 +329,26 @@ class DatabaseService {
       this.db.exec('ROLLBACK;');
       throw e;
     }
+  }
+
+  updateAccountBackupCodes(id, backupCodes) {
+    if (!id) return;
+    const stmt = this.db.prepare(`
+      UPDATE accounts
+      SET backupCode = ?, updatedAt = ?
+      WHERE id = ?
+    `);
+    return stmt.run(encrypt(backupCodes || ''), new Date().toISOString(), id);
+  }
+
+  updateAccountBackupCodesByEmail(email, backupCodes) {
+    if (!email) return;
+    const stmt = this.db.prepare(`
+      UPDATE accounts
+      SET backupCode = ?, updatedAt = ?
+      WHERE LOWER(email) = LOWER(?)
+    `);
+    return stmt.run(encrypt(backupCodes || ''), new Date().toISOString(), String(email).trim());
   }
 
   updateAccountStatus(email, statusData) {
@@ -330,7 +369,7 @@ class DatabaseService {
       stmt.run(
         statusData.status || 'success',
         statusData.error || null,
-        statusData.timestamp || new Date().toLocaleTimeString(),
+        statusData.timestamp || new Date().toISOString(),
         new Date().toISOString(),
         email.trim()
       );
@@ -340,9 +379,9 @@ class DatabaseService {
       const stmt = this.db.prepare(`
         UPDATE accounts 
         SET used = CASE WHEN ? THEN 0 ELSE used END,
-            status = ?,
-            lastError = ?,
-            updatedAt = ?
+        status = ?,
+        lastError = ?,
+        updatedAt = ?
         WHERE LOWER(email) = LOWER(?)
       `);
       stmt.run(
@@ -408,9 +447,19 @@ class DatabaseService {
         .filter(Boolean);
 
       if (incomingUrls.length > 0) {
-        const placeholders = incomingUrls.map(() => '?').join(',');
-        const deleteStmt = this.db.prepare(`DELETE FROM review_links WHERE url NOT IN (${placeholders})`);
-        deleteStmt.run(...incomingUrls);
+        // Chunk deletion to avoid SQLite SQL variable limit (>999)
+        const keepSet = new Set(incomingUrls);
+        const allRows = this.db.prepare('SELECT url FROM review_links').all();
+        const toDelete = allRows
+          .map(r => r.url)
+          .filter(u => !keepSet.has(String(u).trim()));
+
+        const chunkSize = 500;
+        for (let c = 0; c < toDelete.length; c += chunkSize) {
+          const slice = toDelete.slice(c, c + chunkSize);
+          const placeholders = slice.map(() => '?').join(',');
+          this.db.prepare(`DELETE FROM review_links WHERE url IN (${placeholders})`).run(...slice);
+        }
       } else {
         this.db.exec('DELETE FROM review_links;');
       }
@@ -473,7 +522,7 @@ class DatabaseService {
         WHERE url = ?
       `);
       stmt.run(
-        updateData.timestamp || new Date().toLocaleTimeString(),
+        updateData.timestamp || new Date().toISOString(),
         new Date().toISOString(),
         url.trim()
       );
@@ -507,22 +556,36 @@ class DatabaseService {
     if (!Array.isArray(proxies)) return;
     this.db.exec('BEGIN TRANSACTION;');
     try {
-      this.db.exec('DELETE FROM proxies;');
+      const incomingKeys = new Set();
       const stmt = this.db.prepare(`
         INSERT INTO proxies (id, host, port, protocol, username, password, formatted, latency, status, lastTestedAt, error, updatedAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(formatted) DO UPDATE SET
+          protocol = excluded.protocol,
+          password = excluded.password,
+          latency = CASE WHEN proxies.latency != '—' AND proxies.latency IS NOT NULL THEN proxies.latency ELSE excluded.latency END,
+          status = CASE WHEN proxies.status != 'untested' AND proxies.status IS NOT NULL THEN proxies.status ELSE excluded.status END,
+          lastTestedAt = COALESCE(proxies.lastTestedAt, excluded.lastTestedAt),
+          error = COALESCE(proxies.error, excluded.error),
+          updatedAt = excluded.updatedAt
       `);
       for (let i = 0; i < proxies.length; i++) {
         const p = proxies[i];
+        if (!p || !p.host) continue;
+        const host = String(p.host || '').trim();
+        const port = parseInt(p.port, 10) || 80;
+        const username = p.username || '';
+        const formatted = p.formatted || `${host}:${port}`;
+        incomingKeys.add(formatted);
         const id = p.id || ('prx_' + (i + 1) + '_' + crypto.randomBytes(4).toString('hex'));
         stmt.run(
           id,
-          String(p.host || '').trim(),
-          parseInt(p.port, 10) || 80,
+          host,
+          port,
           p.protocol || 'http',
-          p.username || '',
+          username,
           p.password || '',
-          p.formatted || `${p.host}:${p.port}`,
+          formatted,
           p.latency || '—',
           p.status || 'untested',
           p.lastTestedAt || null,
@@ -530,6 +593,15 @@ class DatabaseService {
           new Date().toISOString()
         );
       }
+
+      // Delete only proxies that were removed from the incoming list
+      const existing = this.db.prepare('SELECT id, formatted FROM proxies').all();
+      for (const ep of existing) {
+        if (!incomingKeys.has(ep.formatted)) {
+          this.db.prepare('DELETE FROM proxies WHERE id = ?').run(ep.id);
+        }
+      }
+
       this.db.exec('COMMIT;');
     } catch (e) {
       this.db.exec('ROLLBACK;');
@@ -671,8 +743,12 @@ class DatabaseService {
   close() {
     if (this.db) {
       try {
+        this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+      } catch (_) {}
+      try {
         this.db.close();
       } catch (e) {}
+      this.db = null;
     }
   }
 }

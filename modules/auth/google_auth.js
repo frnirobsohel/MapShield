@@ -765,6 +765,12 @@ async function detectCurrentPageStatus(page, targetEmail) {
         return '2FA_BACKUP_INPUT';
       }
 
+      const hasRecoveryInput = !!document.querySelector('input[name="knowledgePreregisteredEmailResponse"], input#knowledge-preregistered-email-response, input[aria-label*="recovery email" i]');
+      const mentionsRecovery = text.includes('recovery email') || text.includes('confirm the recovery email');
+      if (hasRecoveryInput || (mentionsRecovery && !isSelectionUrl && anyInput)) {
+        return 'RECOVERY_EMAIL_CHALLENGE';
+      }
+
       if (text.includes('g.co/sc') || text.includes('get your security code') || text.includes('security code')) {
         return '2FA_G_CO_SC';
       }
@@ -784,6 +790,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
     if (challengeInfo === '2FA_OPTIONS_LIST') return { type: '2FA_OPTIONS_LIST', description: 'Verification options list page' };
     if (challengeInfo === '2FA_TOTP_INPUT') return { type: '2FA_TOTP_INPUT', description: 'Google Authenticator 6-digit TOTP code input page' };
     if (challengeInfo === '2FA_BACKUP_INPUT') return { type: '2FA_BACKUP_INPUT', description: '8-digit backup code input page' };
+    if (challengeInfo === 'RECOVERY_EMAIL_CHALLENGE') return { type: 'RECOVERY_EMAIL_CHALLENGE', description: 'Confirm recovery email address challenge' };
     if (challengeInfo === '2FA_G_CO_SC') return { type: '2FA_G_CO_SC', description: 'Security code (g.co/sc) page -> Try another way' };
     if (challengeInfo === '2FA_OTHER' || url.includes('/challenge/')) return { type: '2FA_OTHER', description: '2-Step verification page -> Try another way' };
 
@@ -864,7 +871,8 @@ async function handleGooglePostLoginPrompts(currentTab) {
  * Natural entry to Google / Gmail
  */
 async function naturalBrowseToGmail(currentTab, currentCursor, smartClick, syncActiveTab) {
-  const strategies = ['search', 'search', 'homepage', 'direct'];
+  // Favor direct & homepage navigation to prevent triggering Google Search automated query / CAPTCHA bot walls
+  const strategies = ['direct', 'homepage', 'direct', 'search'];
   const chosenStrategy = strategies[Math.floor(Math.random() * strategies.length)];
 
   console.log(`\n🧭 Browsing strategy: [${chosenStrategy.toUpperCase()}]`);
@@ -954,6 +962,7 @@ async function naturalBrowseToGmail(currentTab, currentCursor, smartClick, syncA
  * @param {Object} context.currentCursor
  * @param {string} context.email
  * @param {string} context.password
+ * @param {string} [context.recoveryEmail]
  * @param {Function} context.getBackupCode
  * @param {Function} context.smartClick
  * @param {Function} context.syncActiveTab
@@ -965,7 +974,10 @@ async function ensureGoogleLoggedIn({
   email,
   password,
   twoFactor,
+  backupCode,
+  recoveryEmail,
   getBackupCode,
+  commitBackupCodes,
   smartClick,
   syncActiveTab,
   captchaApiKey,
@@ -1020,6 +1032,10 @@ async function ensureGoogleLoggedIn({
 
       case 'INVALID_BACKUP_CODE': {
         backupAttempts++;
+        // Persist removal of the rejected/used code only after Google rejects it
+        if (typeof commitBackupCodes === 'function') {
+          await commitBackupCodes().catch(() => {});
+        }
         if (backupAttempts >= 4) {
           console.error(`\n❌ [Auth Critical Error]: ${pageStatus.description} (Maximum backup code attempts reached)`);
           throw new Error(`Google Authentication Error [${pageStatus.type}]: ${pageStatus.description}`);
@@ -1320,6 +1336,28 @@ async function ensureGoogleLoggedIn({
         } else {
           console.log('⚠️ No backup code found!');
           await sleep(3000);
+        }
+        break;
+      }
+
+      case 'RECOVERY_EMAIL_CHALLENGE': {
+        console.log(`🛡️ [Page Decision] Google is requesting Recovery Email verification...`);
+        if (recoveryEmail) {
+          console.log(`⌨️  Filling recovery email: "${recoveryEmail}"...`);
+          const recInput = await currentTab.$(
+            'input[name="knowledgePreregisteredEmailResponse"], input#knowledge-preregistered-email-response, input[type="email"], input[type="text"]'
+          );
+          if (recInput) {
+            await click(recInput);
+            await sleep(250);
+            await humanType(currentTab, recoveryEmail.trim(), { canMakeMistakes: false });
+            await sleep(500);
+            await clickGoogleNext(currentTab, 'recoveryEmailNext', currentCursor, syncActiveTab);
+            await sleep(4000);
+          }
+        } else {
+          console.warn('⚠️ No recovery email configured for this account. Skipping...');
+          throw new Error('Google Authentication Error [RECOVERY_EMAIL_REQUIRED]: Google requested recovery email confirmation but none was configured');
         }
         break;
       }

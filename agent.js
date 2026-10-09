@@ -9,7 +9,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const puppeteer = require('rebrowser-puppeteer-core');
 const { createCursor } = require('ghost-cursor');
 
 // Domain Modules & Shared Helpers
@@ -27,6 +26,7 @@ const {
   smartClick: domSmartClick,
   parseProxy,
   UserAgentManager,
+  BrowserManager,
   captureErrorScreenshot,
   isNetworkError,
   isPageOffline
@@ -104,10 +104,12 @@ async function smartClick(target) {
  * Core Agent Execution Routine
  */
 async function runAgentCore(options = {}) {
+  let accountId = options.accountId;
   let email = options.email;
   let password = options.password;
   let twoFactor = options.twoFactor || options['2fa'] || process.env.GOOGLE_2FA_SECRET;
   let backupCode = options.backupCode;
+  let recoveryEmail = options.recoveryEmail;
   let reviewUrl = options.reviewUrl;
   let reportReason = options.reportReason;
   let reportType = options.reportType;
@@ -143,10 +145,12 @@ async function runAgentCore(options = {}) {
       const links = db.getLinks();
 
       if (!email && !options.sessionOnly && options.email !== false && accounts.length > 0) {
+        accountId = accounts[0].id;
         email = accounts[0].email;
         password = password || accounts[0].password;
         twoFactor = twoFactor || accounts[0].twoFactor || accounts[0]['2fa'];
         backupCode = backupCode || accounts[0].backupCode;
+        recoveryEmail = recoveryEmail || accounts[0].recoveryEmail;
       }
       if (!reviewUrl && links.length > 0) {
         reviewUrl = links[0].url;
@@ -177,13 +181,16 @@ async function runAgentCore(options = {}) {
   if (!browserPath) browserPath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   if (headless === undefined) headless = false;
 
-  // Backup codes sequential consumer
+  // Backup codes sequential consumer — DB write deferred until Google accepts/rejects
+  let pendingBackupCodesRemaining = null;
+
   async function getBackupCode() {
     if (backupCode) {
       const list = backupCode.split(',').map(s => s.trim()).filter(Boolean);
       if (list.length > 0) {
         const selected = list[0];
-        backupCode = list.slice(1).join(',');
+        backupCode = list.slice(1).join(', ');
+        pendingBackupCodesRemaining = backupCode;
         console.log(`🔑 Using backup code (${list.length - 1} remaining)`);
         return selected;
       }
@@ -193,6 +200,31 @@ async function runAgentCore(options = {}) {
       return null;
     }
     return await promptUser('\n👉 Enter Google 2FA 8-digit Backup Code: ');
+  }
+
+  async function commitBackupCodes() {
+    if (pendingBackupCodesRemaining === null) return;
+    const remaining = pendingBackupCodesRemaining;
+    pendingBackupCodesRemaining = null;
+    try {
+      const { getDatabase } = require('./database/db');
+      const db = getDatabase();
+      if (accountId) {
+        db.updateAccountBackupCodes(accountId, remaining);
+      } else if (email) {
+        db.updateAccountBackupCodesByEmail(email, remaining);
+      }
+      if (typeof process.send === 'function') {
+        process.send({
+          type: 'account_backup_codes_updated',
+          accountId,
+          email,
+          remainingBackupCodes: remaining
+        });
+      }
+    } catch (dbErr) {
+      console.warn('⚠️ Backup code persistence notice:', dbErr.message);
+    }
   }
 
   console.log('\n🌐 Launching Google Chrome (with Stealth & Isolated Session)...');
@@ -260,43 +292,26 @@ async function runAgentCore(options = {}) {
   const uaManager = new UserAgentManager();
   const startupUa = options.userAgent || uaManager.get_next_user_agent({ os: 'windows', random: true });
 
-  // Launch cleanly with Zero-Extension stealth (click-based native solver active)
-
-  browserInstance = await puppeteer.launch({
-    executablePath: targetExecutable || browserPath,
-    userDataDir: sessionPath,
-    headless: headless,
-    defaultViewport: null,
-    ignoreDefaultArgs: ['--enable-automation'],
-    args: [
-      '--start-maximized',
-      ...(cleanProxyServer ? [`--proxy-server=${cleanProxyServer}`] : []),
-      `--user-agent=${startupUa}`,
-      // WebRTC Leak Protection: Strictly disallow non-proxied UDP lookups
-      '--enforce-webrtc-ip-permission-check',
-      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-      // DNS & Background Network Isolation
-      '--dns-prefetch-disable',
-      '--disable-background-networking',
-      '--disable-component-update',
-      '--disable-domain-reliability',
-      '--disable-sync',
-      '--disable-breakpad',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-infobars',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=ChromeSigninBubble,SignInProfileCreationFlow',
-      '--no-service-autorun',
-      '--password-store=basic',
-      '--log-level=3',
-      '--disable-logging',
-      '--silent-debugger-extension-api',
-      `--disk-cache-dir=${tempCacheDir}`
-    ]
+  // Launch via BrowserManager (same stealth flags / session path as before)
+  const browserManager = new BrowserManager({
+    defaultBrowserPath: targetExecutable || browserPath
   });
+  const launched = await browserManager.launch({
+    browserPath: targetExecutable || browserPath,
+    headless,
+    userDataDir: sessionPath,
+    proxyServer: cleanProxyServer,
+    proxyAuth: activeProxyAuth,
+    userAgent: startupUa,
+    diskCacheDir: tempCacheDir,
+    args: ['--disable-infobars']
+  });
+  browserInstance = launched.browser;
+  currentTab = launched.page;
+
+  if (activeProxyAuth && activeProxyAuth.username) {
+    console.log(`🔐 Authenticating proxy credentials for user "${activeProxyAuth.username}"...`);
+  }
 
   // Query actual launched browser version to align User-Agent and Client Hints perfectly (zero mismatch)
   const actualBrowserVersion = await browserInstance.version().catch(() => null);
@@ -311,19 +326,9 @@ async function runAgentCore(options = {}) {
   console.log(`🎭 User-Agent: ${activeUserAgentProfile.ua}`);
   console.log(`🛡️ Client Hints: Sec-Ch-Ua synchronized with ${activeUserAgentProfile.brand} v${activeUserAgentProfile.major}`);
 
-  const pages = await browserInstance.pages();
-  currentTab = pages.length > 0 ? pages[0] : await browserInstance.newPage();
-  attachDialogAutoHandler(currentTab);
   currentCursor = createCursor(currentTab);
 
-  if (activeProxyAuth && activeProxyAuth.username) {
-    console.log(`🔐 Authenticating proxy credentials for user "${activeProxyAuth.username}"...`);
-    await currentTab.authenticate(activeProxyAuth).catch(err => {
-      console.warn('⚠️ Proxy initial authentication warning:', err.message);
-    });
-  }
-
-  // Strictly apply synchronized UserAgent + ClientHints
+  // Strictly apply synchronized UserAgent + ClientHints (post-launch version align)
   await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
   attachDialogAutoHandler(currentTab);
   await applyDeepStealth(currentTab);
@@ -360,7 +365,10 @@ async function runAgentCore(options = {}) {
         email,
         password,
         twoFactor,
+        backupCode,
+        recoveryEmail,
         getBackupCode,
+        commitBackupCodes,
         smartClick,
         syncActiveTab,
         captchaApiKey,
@@ -369,6 +377,8 @@ async function runAgentCore(options = {}) {
       if (!isLoginSuccess) {
         throw new Error('Google login could not be completed for account: ' + email);
       }
+      // Persist consumed backup codes only after Google login succeeds
+      await commitBackupCodes();
 
       console.log('\n[Agent] Step 2: Submitting Review Report');
       const repResult = await runMapsReporter({

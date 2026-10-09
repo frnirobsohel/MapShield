@@ -330,19 +330,7 @@ async function runMapsReporter({
       }
     }).catch(() => {});
 
-    // 1. Selector search (strictly excluding Share buttons)
-    for (const sel of dotsSelectors) {
-      const btns = await p.$$(sel).catch(() => []);
-      for (const btn of btns) {
-        const isShare = await p.evaluate(el => {
-          const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-          const tooltip = (el.getAttribute('data-tooltip') || '').toLowerCase();
-          return aria.includes('share') || tooltip.includes('share');
-        }, btn).catch(() => false);
-        if (!isShare) return btn;
-      }
-    }
-    // 2. Review container scoped search
+    // 1. Review container scoped search FIRST (prevents matching top business header buttons)
     const scopedHandle = await p.evaluateHandle(() => {
       const reviewContainers = Array.from(document.querySelectorAll('[data-review-id], div.jftiEf, div.m6QErb div[role="region"], div.GKa6Le, div.fontBodyMedium'));
       for (const container of reviewContainers) {
@@ -361,9 +349,34 @@ async function runMapsReporter({
         });
         if (dotsInContainer) return dotsInContainer;
       }
-      // 3. Global DOM search
+      return null;
+    }).catch(() => null);
+
+    if (scopedHandle && scopedHandle.asElement()) {
+      return scopedHandle.asElement();
+    }
+
+    // 2. Targeted selector search (strictly excluding header banners and Share buttons)
+    for (const sel of dotsSelectors) {
+      const btns = await p.$$(sel).catch(() => []);
+      for (const btn of btns) {
+        const isValidReviewBtn = await p.evaluate(el => {
+          const inHeader = !!el.closest('.header, [role="banner"], .widget-pane-section-header, #QA0Szd .m6QErb.DEnSwitch');
+          const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+          const tooltip = (el.getAttribute('data-tooltip') || '').toLowerCase();
+          const isShare = aria.includes('share') || tooltip.includes('share');
+          return !inHeader && !isShare;
+        }, btn).catch(() => false);
+        if (isValidReviewBtn) return btn;
+      }
+    }
+
+    // 3. Global DOM search fallback (strictly excluding header banner and share)
+    const fallbackHandle = await p.evaluateHandle(() => {
       const buttons = Array.from(document.querySelectorAll('button, div[role="button"], [role="button"]'));
       return buttons.find(b => {
+        const inHeader = !!b.closest('.header, [role="banner"], .widget-pane-section-header, #QA0Szd .m6QErb.DEnSwitch');
+        if (inHeader) return false;
         const aria = (b.getAttribute('aria-label') || '').toLowerCase();
         const tooltip = (b.getAttribute('data-tooltip') || '').toLowerCase();
         if (aria.includes('share') || tooltip.includes('share')) return false;
@@ -382,7 +395,7 @@ async function runMapsReporter({
       }) || null;
     }).catch(() => null);
 
-    return scopedHandle ? scopedHandle.asElement() : null;
+    return fallbackHandle ? fallbackHandle.asElement() : null;
   };
 
   const dotsBtn = await waitForActionableElement(page, dotsFinder, {
@@ -579,15 +592,34 @@ async function runMapsReporter({
       return false;
     }).catch(() => false);
 
+    let targetLegalPage = reportPage || page;
     if (legalLinkFound) {
       console.log('[Step 5] Clicked legal removal link from report dialog.');
-      await sleep(3000);
+      // Synchronize with any opened Troubleshooter tab or navigated page
+      const activeBrowser = browser || (typeof page?.browser === 'function' ? page.browser() : null);
+      if (activeBrowser) {
+        const troubleshooterPatterns = [
+          'troubleshooter/1114905',
+          'support.google.com/legal',
+          p => (p.url() || '').includes('1114905')
+        ];
+        const transitioned = await waitForPageOrTabTransition(activeBrowser, reportPage, troubleshooterPatterns, {
+          timeout: 8000,
+          actionName: 'Troubleshooter Tab Synchronization'
+        }).catch(() => null);
+        if (transitioned) {
+          targetLegalPage = transitioned;
+          console.log(`🎯 [Step 5] Synchronized with Troubleshooter tab: ${targetLegalPage.url()}`);
+        }
+      } else {
+        await sleep(2000);
+      }
     }
 
     const legalResult = await executeLegalNoticeFlow({
       page,
       browser,
-      reportPage,
+      reportPage: targetLegalPage,
       reviewUrl: targetUrl,
       details,
       aiOptions,
@@ -660,6 +692,7 @@ async function runMapsReporter({
 
     // 2. Check frames
     for (const frame of p.frames()) {
+      if (!frame || (typeof frame.isDetached === 'function' && frame.isDetached())) continue;
       try {
         const fHandle = await frame.evaluateHandle((cfg) => {
           const rLinks = Array.from(document.querySelectorAll('a[href*="report/submit"], a[href*="/rap/report"], [data-value], [data-reason]'));

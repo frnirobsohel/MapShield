@@ -15,43 +15,8 @@
       this.labelAiKey = document.getElementById('labelAiKey');
       this.aiBadge = document.getElementById('aiBadge');
       this.btnToggleAiKey = document.getElementById('btnToggleAiKey');
-
-      this.initEvents();
-    }
-
-    initEvents() {
-      // Toggle Password Visibility
-      this.btnToggleAiKey?.addEventListener('click', () => {
-        if (!this.inputAiKey) return;
-        const isPass = this.inputAiKey.type === 'password';
-        this.inputAiKey.type = isPass ? 'text' : 'password';
-      });
-
-      // Provider Switcher
-      this.selectAiProvider?.addEventListener('change', () => {
-        this.updateModelsForProvider(this.selectAiProvider.value);
-      });
-
-      // Save Config Button
-      this.btnSaveAi?.addEventListener('click', async () => {
-        const config = this.getConfig();
-        if (window.desktopAPI?.saveConfig) {
-          await window.desktopAPI.saveConfig({
-            aiApiKey: config.apiKey,
-            aiModel: config.model,
-            aiProvider: config.provider,
-            aiInspection: config.enabled
-          });
-        }
-        if (window.AppState?.appSettings) {
-          window.AppState.appSettings.aiApiKey = config.apiKey;
-          window.AppState.appSettings.aiModel = config.model;
-          window.AppState.appSettings.aiProvider = config.provider;
-          window.AppState.appSettings.aiInspection = config.enabled;
-        }
-
-        this.showToast('AI settings saved successfully!', true);
-      });
+      // Eye toggle / provider / save listeners live in app.js only —
+      // duplicate handlers previously cancelled API key reveal on one click.
     }
 
     updateModelsForProvider(provider) {

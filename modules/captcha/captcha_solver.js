@@ -12,6 +12,9 @@
 
 const { sleep, randomBetween } = require('../helpers/biometrics');
 
+/** Dynamic (reload-on-click) tile rounds before audio fallback. One-shot / 4x4 never use this. */
+const DYNAMIC_AUDIO_AFTER_ROUNDS = 8;
+
 /**
  * Checks if any CAPTCHA widget or challenge is present on the page
  * @param {import('rebrowser-puppeteer-core').Page} page
@@ -94,6 +97,7 @@ async function isRecaptchaPassed(page) {
     if (typeof page.frames === 'function') {
       const frames = page.frames();
       for (const frame of frames) {
+        if (!frame || (typeof frame.isDetached === 'function' && frame.isDetached())) continue;
         try {
           const isChecked = await frame.$('.recaptcha-checkbox-checked');
           if (isChecked) return true;
@@ -316,20 +320,68 @@ async function getChallengeType(frame) {
     const comment = descEl ? descEl.innerText.replace(/\n+/g, ' ').trim() : '';
     const lowered = comment.toLowerCase();
 
-    // Dynamic challenge keywords (localized English variants of "Click verify once there are none left")
-    const isDynamic =
+    // 4x4 is ALWAYS a one-shot split-image ("Select all squares with X / If there are none, click skip").
+    // Tiles highlight on click; they NEVER fade/replace. Check this FIRST so "if there are none, click skip"
+    // cannot be confused with the 3x3 dynamic "click verify once there are none left".
+    const is4x4 = !!document.querySelector('img.rc-image-tile-44, table.rc-imageselect-table-44');
+    if (is4x4) return { style: 'multi', comment };
+
+    // Dynamic 3x3 = clicked tiles fade and are replaced. Trust the instruction, or live
+    // replacement <img.rc-image-tile-11> tiles once the first round has already clicked.
+    const hasReplacementTiles = !!document.querySelector('img.rc-image-tile-11');
+    const isDynamicText =
       lowered.includes('none left') ||
       lowered.includes('once there are none') ||
       lowered.includes('click verify once') ||
-      !!document.querySelector('.rc-imageselect-desc-no-canonical') ||
-      !!document.querySelector('img.rc-image-tile-11');
+      lowered.includes('there are none left') ||
+      (lowered.includes('verify') &&
+        (lowered.includes('none') || lowered.includes('no more') || lowered.includes('left'))) ||
+      lowered.includes('keine mehr') ||
+      lowered.includes('übrig sind') ||
+      lowered.includes('no queden') ||
+      lowered.includes("n'en reste plus") ||
+      lowered.includes('reste plus') ||
+      (lowered.includes('nessuna') && lowered.includes('verifica')) ||
+      (lowered.includes('nenhuma') && lowered.includes('verificar'));
 
-    const is4x4 = !!document.querySelector('img.rc-image-tile-44, table.rc-imageselect-table-44');
-
-    if (isDynamic) return { style: 'dynamic', comment };
-    if (is4x4) return { style: 'multi', comment };
+    if (isDynamicText || hasReplacementTiles) return { style: 'dynamic', comment };
     return { style: 'oneshot', comment };
   }).catch(() => ({ style: 'oneshot', comment: '' }));
+}
+
+/**
+ * Parses 2Captcha Grid API click payload ("click:1/5/9") into 1-based tile numbers.
+ * @param {string} data
+ * @returns {number[]}
+ */
+function parseGridClicks(data) {
+  if (!data || data === 'No_matching_images') return [];
+  return String(data)
+    .replace('click:', '')
+    .split('/')
+    .map(Number)
+    .filter((n) => !isNaN(n) && n > 0);
+}
+
+/**
+ * Dynamic reCAPTCHA only reloads tiles that were clicked last round.
+ * Unchanged tiles were already judged "no match" — if 2Captcha re-flags them,
+ * those are false positives (the exact "1 real crosswalk + 2 extra wrong" failure).
+ * @param {number[]} clicks
+ * @param {Set<number>|null} reloadedTiles
+ * @returns {{ kept: number[], dropped: number[] }}
+ */
+function filterReloadedTileClicks(clicks, reloadedTiles) {
+  if (!reloadedTiles || reloadedTiles.size === 0) {
+    return { kept: clicks.slice(), dropped: [] };
+  }
+  const kept = [];
+  const dropped = [];
+  for (const n of clicks) {
+    if (reloadedTiles.has(n)) kept.push(n);
+    else dropped.push(n);
+  }
+  return { kept, dropped };
 }
 
 /**
@@ -358,6 +410,81 @@ async function getChallengeErrorState(frame) {
       dynamicMore: isVisible('.rc-imageselect-error-dynamic-more')
     };
   }).catch(() => empty);
+}
+
+/**
+ * Waits until the freshly composed grid image differs from the one previously sent to
+ * 2Captcha — i.e. the clicked tiles have faded out and their replacement images have
+ * fully loaded & composited. This is the core guard that prevents re-sending a STALE grid
+ * (which makes 2Captcha return the OLD tile positions and causes clicking now-wrong tiles).
+ *
+ * Measured on live reCAPTCHA: replacement <img.rc-image-tile-11> can take ~2.5s+ to even
+ * appear in the DOM, so a fixed sleep is unreliable — we poll on actual visual change.
+ *
+ * @param {any} frame challenge bframe
+ * @param {string|null} prevBody base64 body previously sent to 2Captcha
+ * @param {number} [timeoutMs=11000]
+ * @returns {Promise<boolean>} true if a changed grid was observed, false on timeout
+ */
+async function waitForGridChange(frame, prevBody, timeoutMs = 11000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await sleep(500);
+    let params;
+    try {
+      params = await getCaptchaParams(frame); // load-guard inside blocks on half-faded tiles
+    } catch (_) {
+      continue;
+    }
+    if (params && params.body && params.body !== prevBody) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Official 2Captcha Selenium pattern: after clicking N dynamic tiles, wait until EACH
+ * clicked cell has a fully-loaded replacement <img.rc-image-tile-11>. Sending the grid
+ * before all N have swapped is what makes 2Captcha re-see leftover crosswalks and
+ * return extra (wrong) clicks.
+ * @param {any} frame
+ * @param {number[]} clickedTiles 1-based indices
+ * @param {string|null} prevBody
+ * @param {number} [timeoutMs=11000]
+ * @returns {Promise<boolean>}
+ */
+async function waitForClickedTilesReloaded(frame, clickedTiles, prevBody, timeoutMs = 11000) {
+  const wanted = (clickedTiles || []).filter((n) => n > 0);
+  if (wanted.length === 0) return waitForGridChange(frame, prevBody, timeoutMs);
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await sleep(400);
+    const allReady = await frame.evaluate((indices) => {
+      const table = document.querySelector(
+        'table.rc-imageselect-table-33, table[class*="rc-imageselect-table"]'
+      );
+      if (!table) return false;
+      const cells = Array.from(table.querySelectorAll('td.rc-imageselect-tile, td'));
+      return indices.every((n) => {
+        const cell = cells[n - 1];
+        if (!cell) return false;
+        const img = cell.querySelector('img.rc-image-tile-11');
+        return !!(img && img.complete && img.naturalWidth > 0);
+      });
+    }, wanted).catch(() => false);
+
+    if (!allReady) continue;
+
+    try {
+      const params = await getCaptchaParams(frame);
+      if (params && params.body && params.body !== prevBody) return true;
+    } catch (_) {}
+    // All clicked cells show a loaded replacement, but composite may still match
+    // lastSentBody for a moment — keep polling until the canvas actually changes.
+  }
+  return false;
 }
 
 /**
@@ -524,6 +651,175 @@ async function triggerRecaptchaCheckbox(page) {
 }
 
 /**
+ * Fallback for DYNAMIC tile challenges only: switch the bframe to the audio challenge,
+ * send the MP3 to 2Captcha AudioTask, type the transcript, then Verify.
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {any} frame
+ * @param {string} apiKey
+ * @returns {Promise<boolean>}
+ */
+async function solveRecaptchaViaAudio(page, frame, apiKey) {
+  if (!apiKey || !page || !frame) return false;
+
+  console.log('🎧 [2Captcha Audio]: Dynamic tile fallback — switching to audio challenge...');
+
+  const switched = await frame.evaluate(() => {
+    const btn = document.querySelector('#recaptcha-audio-button, button#recaptcha-audio-button');
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  }).catch(() => false);
+
+  if (!switched) {
+    console.warn('⚠️ [2Captcha Audio]: Audio button not found on challenge frame.');
+    return false;
+  }
+
+  await sleep(randomBetween(1800, 2600));
+
+  const isAudioBlocked = async () =>
+    frame.evaluate(() => {
+      if (document.querySelector('.rc-doscaptcha-header, .rc-doscaptcha-body')) return true;
+      const text = (document.body && document.body.innerText ? document.body.innerText : '').toLowerCase();
+      return text.includes('automated queries') || text.includes('try again later');
+    }).catch(() => false);
+
+  if (await isAudioBlocked()) {
+    console.warn('⚠️ [2Captcha Audio]: Google blocked the audio challenge (automated-query / DOS).');
+    return false;
+  }
+
+  const TwoCaptcha = require('@2captcha/captcha-solver');
+  const solver = new TwoCaptcha.Solver(apiKey, 1000);
+
+  for (let audioAttempt = 0; audioAttempt < 2; audioAttempt++) {
+    if (audioAttempt > 0) {
+      console.log('🔄 [2Captcha Audio]: Verify failed — loading a fresh audio clip (retry 2/2)...');
+      const reloaded = await frame.evaluate(() => {
+        const btn = document.querySelector('#recaptcha-reload-button, button.rc-button-reload');
+        if (btn) {
+          btn.click();
+          return true;
+        }
+        return false;
+      }).catch(() => false);
+      if (!reloaded) break;
+      await sleep(randomBetween(1500, 2200));
+      if (await isAudioBlocked()) break;
+    }
+
+    let audioSrc = null;
+    for (let i = 0; i < 10 && !audioSrc; i++) {
+      audioSrc = await frame.evaluate(() => {
+        const audio = document.querySelector('#audio-source, audio');
+        if (audio && (audio.src || audio.getAttribute('src'))) return audio.src || audio.getAttribute('src');
+        const link = document.querySelector('.rc-audiochallenge-tdownload-link, a[href*="payload"]');
+        return link && link.href ? link.href : null;
+      }).catch(() => null);
+      if (!audioSrc) await sleep(400);
+    }
+
+    if (!audioSrc) {
+      console.warn('⚠️ [2Captcha Audio]: No audio source URL after switching challenge.');
+      break;
+    }
+
+    const base64 = await frame.evaluate(async (url) => {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    }, audioSrc).catch(() => null);
+
+    if (!base64) {
+      console.warn('⚠️ [2Captcha Audio]: Failed to download audio payload.');
+      break;
+    }
+
+    let answer;
+    try {
+      console.log('🌐 [2Captcha Audio]: Sending MP3 to 2Captcha Audio API...');
+      answer = await solver.audio({ body: base64, lang: 'en' });
+    } catch (err) {
+      console.error('❌ [2Captcha Audio]: API error:', err.message);
+      break;
+    }
+
+    if (!answer || !answer.data) {
+      console.warn('⚠️ [2Captcha Audio]: Empty transcript from 2Captcha.');
+      break;
+    }
+
+    console.log(`🎉 [2Captcha Audio]: Transcript received: "${answer.data}"`);
+
+    const inputReady = await frame.evaluate(() => {
+      const input = document.querySelector('#audio-response, input#audio-response');
+      if (!input) return false;
+      input.focus();
+      input.click();
+      input.value = '';
+      return true;
+    }).catch(() => false);
+
+    if (!inputReady) {
+      console.warn('⚠️ [2Captcha Audio]: #audio-response input not found.');
+      break;
+    }
+
+    const transcript = String(answer.data).trim();
+    let typedOk = false;
+    if (typeof frame.type === 'function') {
+      typedOk = await frame.type('#audio-response', transcript, { delay: randomBetween(35, 70) }).then(() => true).catch(() => false);
+    }
+    if (!typedOk) {
+      typedOk = await frame.evaluate((text) => {
+        const input = document.querySelector('#audio-response, input#audio-response');
+        if (!input) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(input, text);
+        else input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }, transcript).catch(() => false);
+    }
+    if (!typedOk) {
+      console.warn('⚠️ [2Captcha Audio]: Failed to type transcript into #audio-response.');
+      break;
+    }
+
+    await sleep(randomBetween(600, 1000));
+
+    console.log('🚀 [2Captcha Audio]: Audio complete — clicking Verify...');
+    await frame.evaluate(() => {
+      const btn = document.querySelector('#recaptcha-verify-button, button#recaptcha-verify-button');
+      if (!btn) return;
+      btn.removeAttribute('disabled');
+      btn.disabled = false;
+      btn.click();
+    }).catch(() => {});
+    await clickRecaptchaVerifyButton(page, frame);
+    await sleep(randomBetween(2200, 3200));
+
+    const passed = await isRecaptchaPassed(page);
+    if (passed) {
+      console.log('🎉 [2Captcha Audio]: Audio fallback solved the challenge.');
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Solves reCAPTCHA using the 2Captcha Grid API and Puppeteer mouse clicks
  * (Direct implementation of 2captcha/puppeteer-recaptcha-solver-using-clicks)
  * 
@@ -571,9 +867,14 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
   await initCaptchaParamsExtractor(frame);
 
   let attempts = 0;
-  const maxAttempts = options.maxAttempts || 12; // dynamic challenges legitimately need more rounds
-  let previousId = null;          // 2Captcha task id to link dynamic continuation rounds
+  const maxAttempts = options.maxAttempts || 12; // oneshot / 4x4 ceiling; dynamic switches to audio after 8
+  const audioAfter = options.dynamicAudioAfterRounds || DYNAMIC_AUDIO_AFTER_ROUNDS;
+  let firstTaskId = null;         // official 3x3 pattern: keep the FIRST task id as previousID
   let verifyFailures = 0;         // safety guard against infinite verify loops
+  let lastSentBody = null;        // last grid image sent to 2Captcha (for stale detection)
+  let unchangedSkips = 0;         // skip re-sending an unchanged composite (official selenium)
+  let reloadedTiles = null;       // tiles that actually replaced last round (dynamic only)
+  let dynamicRounds = 0;          // completed dynamic tile rounds (audio only after 8)
 
   while (attempts < maxAttempts) {
     attempts++;
@@ -582,6 +883,16 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
     // Re-detect style every round — a one-shot can turn into a dynamic set and vice-versa.
     const { style } = await getChallengeType(frame);
     const isDynamic = style === 'dynamic';
+    if (!isDynamic) {
+      reloadedTiles = null;
+      firstTaskId = null;
+    }
+
+    // Audio fallback is ONLY for the reload-on-click (dynamic tile) challenge, after 8 rounds.
+    if (isDynamic && dynamicRounds >= audioAfter) {
+      console.log(`🎧 [2Captcha Clicks]: Dynamic tile still unsolved after ${dynamicRounds} rounds → audio fallback.`);
+      return await solveRecaptchaViaAudio(page, frame, apiKey);
+    }
 
     let captchaParams;
     try {
@@ -598,6 +909,20 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       break;
     }
 
+    // Official: do not pay 2Captcha again for the exact same composite (causes repeat clicks).
+    if (isDynamic && lastSentBody && captchaParams.body === lastSentBody) {
+      unchangedSkips++;
+      if (unchangedSkips < 5) {
+        console.log(`⏭️ [2Captcha Clicks]: Grid unchanged (${unchangedSkips}/5) — not re-sending to 2Captcha.`);
+        await sleep(1000);
+        continue;
+      }
+      console.log('⏭️ [2Captcha Clicks]: Grid still unchanged after 5 skips — forcing one send.');
+      unchangedSkips = 0;
+    } else {
+      unchangedSkips = 0;
+    }
+
     console.log(`🌐 [2Captcha Clicks]: Sending ${captchaParams.columns}x${captchaParams.rows} [${style}] grid ("${captchaParams.comment}") to 2Captcha API...`);
 
     const gridPayload = {
@@ -608,8 +933,11 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       canSkip: 1,
       img_type: 'recaptcha'
     };
-    // For dynamic challenges, link rounds so 2Captcha evaluates the same task continuation.
-    if (isDynamic && previousId) gridPayload.previousId = previousId;
+    // Official dynamic 3x3 only: recaptcha=1 + previousID (first task) → workers judge NEW tiles.
+    if (isDynamic) {
+      gridPayload.recaptcha = 1;
+      if (firstTaskId) gridPayload.previousId = firstTaskId;
+    }
 
     let answer;
     try {
@@ -629,12 +957,30 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       continue;
     }
 
-    if (answer.id) previousId = answer.id;
+    if (isDynamic) dynamicRounds++;
+    if (isDynamic && !firstTaskId && answer.id) firstTaskId = answer.id;
+    lastSentBody = captchaParams.body;
     console.log(`🎉 [2Captcha Clicks]: Solution received for task ID ${answer.id}: "${answer.data}"`);
 
-    // ── Branch A: 2Captcha (NOT our bot) decided there are no more matching tiles ──
-    if (answer.data === 'No_matching_images') {
-      console.log('ℹ️ [2Captcha Clicks]: 2Captcha reports No_matching_images → clicking Verify...');
+    let clicks = parseGridClicks(answer.data);
+
+    // Dynamic continuation: only tiles that RELOADED last round can contain a new match.
+    // 2Captcha often re-flags unchanged tiles (the "1 real + 2 extra wrong" cascade).
+    if (isDynamic && reloadedTiles) {
+      const { kept, dropped } = filterReloadedTileClicks(clicks, reloadedTiles);
+      if (dropped.length) {
+        console.log(`🛡️ [2Captcha Clicks]: Dropping extra clicks on tiles that did NOT reload: [${dropped.join(', ')}] (reloaded: [${[...reloadedTiles].join(', ')}])`);
+      }
+      clicks = kept;
+    }
+
+    // ── Branch A: no more matching tiles (2Captcha said so, OR every extra click was on an unchanged tile) ──
+    if (answer.data === 'No_matching_images' || clicks.length === 0) {
+      if (answer.data === 'No_matching_images') {
+        console.log('ℹ️ [2Captcha Clicks]: 2Captcha reports No_matching_images → clicking Verify...');
+      } else {
+        console.log('ℹ️ [2Captcha Clicks]: No matching reloaded tiles remain → clicking Verify...');
+      }
       await sleep(randomBetween(700, 1200));
       await clickRecaptchaVerifyButton(page, frame);
 
@@ -654,29 +1000,33 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       const errState = await getChallengeErrorState(frame);
       if (errState.dynamicMore) {
         console.log('🔄 [2Captcha Clicks]: New images appeared after verify — continuing dynamic rounds...');
-        previousId = null; // fresh image set → new task
+        reloadedTiles = null;
+        lastSentBody = null;
+        unchangedSkips = 0;
         await sleep(1200);
         continue;
       }
       if (errState.incorrect || errState.selectMore) {
         console.log('🔄 [2Captcha Clicks]: Verify rejected (incorrect / select-more) — retrying with fresh capture...');
-        previousId = null;
+        firstTaskId = null;
+        reloadedTiles = null; // whole grid reshuffled
+        lastSentBody = null;
+        dynamicRounds = 0;
+        unchangedSkips = 0;
         verifyFailures++;
-        if (verifyFailures >= 3) break; // give up gracefully
+        if (verifyFailures >= 3 && !isDynamic) break; // dynamic keeps going until 8 → audio
         await sleep(1200);
         continue;
       }
 
-      // No clear signal; loop defensively but bounded by verifyFailures.
+      // No clear signal; loop defensively. Dynamic stays in-loop until 8 rounds then audio.
       verifyFailures++;
-      if (verifyFailures >= 3) break;
+      if (verifyFailures >= 3 && !isDynamic) break;
       await sleep(1200);
       continue;
     }
 
-    // ── Branch B: 2Captcha returned tiles to click ──
-    const rawClicks = (answer.data || '').replace('click:', '').split('/');
-    const clicks = rawClicks.map(Number).filter(n => !isNaN(n) && n > 0);
+    // ── Branch B: tiles to click ──
     console.log(`🎯 [2Captcha Clicks]: Clicking target tiles: [${clicks.join(', ')}]`);
 
     for (let i = 0; i < clicks.length; i++) {
@@ -685,11 +1035,13 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
     }
 
     if (isDynamic) {
-      // DYNAMIC: do NOT verify here. Clicked tiles fade and are replaced by new images.
-      // Wait for replacements to finish loading, then re-capture and re-send so 2Captcha
-      // can judge the NEW images. Verify happens only when 2Captcha says No_matching_images.
-      console.log('⏳ [2Captcha Clicks]: Dynamic challenge — waiting for replacement tiles to load, then re-capturing...');
-      await sleep(randomBetween(2200, 3400));
+      // Only these cells will fade and receive new images. Next round, ignore any
+      // 2Captcha clicks that fall outside this set (false positives on unchanged tiles).
+      reloadedTiles = new Set(clicks);
+      // Official: wait until EVERY clicked tile has a replacement, then re-send (no Verify).
+      // If nothing reloads, there is nothing left to click → Verify.
+      console.log(`⏳ [2Captcha Clicks]: Waiting for ${clicks.length} clicked tile(s) to fully reload...`);
+      const changed = await waitForClickedTilesReloaded(frame, clicks, lastSentBody, 11000);
 
       if (await isRecaptchaPassed(page)) return true;
       const stillActive = await isFoundRecaptchaChallengeFrame(page, 4000);
@@ -697,7 +1049,17 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
         if (await isRecaptchaPassed(page)) return true;
         break;
       }
-      continue; // loop → re-capture new grid (extractor load-guard blocks on half-faded tiles)
+
+      if (!changed) {
+        console.log('🔎 [2Captcha Clicks]: Clicked tiles did not reload — clicking Verify.');
+        await clickRecaptchaVerifyButton(page, frame);
+        await sleep(randomBetween(2200, 3200));
+        if (await isRecaptchaPassed(page)) return true;
+        reloadedTiles = null;
+        lastSentBody = null;
+        unchangedSkips = 0;
+      }
+      continue;
     }
 
     // ── ONE-SHOT / MULTI: all tiles selected in one pass, verify once ──
@@ -721,11 +1083,20 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
     if (errState.incorrect) console.log('🔄 [2Captcha Clicks]: Incorrect — new image set issued, retrying...');
     else if (errState.selectMore || errState.dynamicMore) console.log('🔄 [2Captcha Clicks]: More selections required, continuing...');
     else console.log('🔄 [2Captcha Clicks]: Multi-round challenge continuing with next set of images...');
-    previousId = null;
+    firstTaskId = null;
+    reloadedTiles = null;
+    lastSentBody = null;
+    dynamicRounds = 0;
+    unchangedSkips = 0;
     await sleep(1500);
   }
 
-  return await isRecaptchaPassed(page);
+  if (await isRecaptchaPassed(page)) return true;
+  if (dynamicRounds >= audioAfter) {
+    console.log(`🎧 [2Captcha Clicks]: Dynamic tile still unsolved after ${dynamicRounds} rounds → audio fallback.`);
+    return await solveRecaptchaViaAudio(page, frame, apiKey);
+  }
+  return false;
 }
 
 /**
@@ -1078,10 +1449,14 @@ module.exports = {
   getCaptchaParams,
   getChallengeType,
   getChallengeErrorState,
+  parseGridClicks,
+  filterReloadedTileClicks,
   clickAtCoordinates,
   clickRecaptchaVerifyButton,
   triggerRecaptchaCheckbox,
   solveRecaptchaViaClicks,
+  solveRecaptchaViaAudio,
+  DYNAMIC_AUDIO_AFTER_ROUNDS,
   solveRecaptchaViaApi,
   injectRecaptchaToken,
   handlePageCaptcha,

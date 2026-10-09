@@ -73,6 +73,12 @@ class BrowserManager {
       }
     }
 
+    const diskCacheDir = options.diskCacheDir
+      || path.join(os.tmpdir(), 'mapsshield_browser_cache');
+    if (!fs.existsSync(diskCacheDir)) {
+      try { fs.mkdirSync(diskCacheDir, { recursive: true }); } catch (_) {}
+    }
+
     const chromeArgs = [
       '--start-maximized',
       '--no-sandbox',
@@ -93,7 +99,7 @@ class BrowserManager {
       '--log-level=3',
       '--disable-logging',
       '--silent-debugger-extension-api',
-      `--disk-cache-dir=${path.join(os.tmpdir(), 'mapsshield_browser_cache')}`,
+      `--disk-cache-dir=${diskCacheDir}`,
       '--no-first-run',
       '--no-default-browser-check',
       '--password-store=basic',

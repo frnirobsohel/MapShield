@@ -485,13 +485,17 @@ async function executeQueue() {
         } catch (e) {}
       }
 
-      if (payload.proxy.mode === 'rotate' && pool && pool.length > 0) {
-        const item = pool[i % pool.length];
+      // Prioritize healthy proxies (skip known dead/failed ones if healthy alternatives exist)
+      const healthyPool = Array.isArray(pool) ? pool.filter(p => typeof p === 'object' ? p.status !== 'failed' && p.status !== 'error' : true) : [];
+      const activePool = healthyPool.length > 0 ? healthyPool : pool;
+
+      if (payload.proxy.mode === 'rotate' && activePool && activePool.length > 0) {
+        const item = activePool[i % activePool.length];
         currentProxy = typeof item === 'object' && item.formatted ? item.formatted : (typeof item === 'object' ? `${item.host}:${item.port}` : String(item));
       } else if (payload.proxy.server) {
         currentProxy = typeof payload.proxy.server === 'object' && payload.proxy.server.formatted ? payload.proxy.server.formatted : String(payload.proxy.server);
-      } else if (pool && pool.length > 0) {
-        const item = pool[0];
+      } else if (activePool && activePool.length > 0) {
+        const item = activePool[0];
         currentProxy = typeof item === 'object' && item.formatted ? item.formatted : (typeof item === 'object' ? `${item.host}:${item.port}` : String(item));
       }
     }
@@ -532,10 +536,12 @@ async function executeQueue() {
       };
 
       await runAgentCore({
+        accountId: currentAccount ? currentAccount.id : undefined,
         email: currentAccount ? currentAccount.email : undefined,
         password: currentAccount ? currentAccount.password : undefined,
         twoFactor: currentAccount ? (currentAccount.twoFactor || currentAccount['2fa']) : undefined,
         backupCode: currentAccount ? currentAccount.backupCode : undefined,
+        recoveryEmail: currentAccount ? (currentAccount.recoveryEmail || currentAccount.recovery_email) : undefined,
         reviewUrl: currentUrl,
         reportType: currentJob.mode || payload.reportType || 'standard',
         reportReason: currentJob.reason || payload.reportReason || 'spam',
@@ -549,6 +555,17 @@ async function executeQueue() {
         isLast: i === jobs.length - 1,
         isSubJob: true
       });
+
+      // Synchronize in-memory account backup codes if consumed during run
+      if (currentAccount && currentAccount.email) {
+        try {
+          const freshAcc = getDatabase().getAccounts().find(a => a.email.toLowerCase() === currentAccount.email.toLowerCase());
+          if (freshAcc) {
+            currentAccount.backupCode = freshAcc.backupCode;
+          }
+        } catch (_) {}
+      }
+
       console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
 
       // Record Audit Entry to SQLite
