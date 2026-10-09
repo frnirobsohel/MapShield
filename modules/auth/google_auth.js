@@ -540,6 +540,33 @@ async function detectCurrentPageStatus(page, targetEmail) {
   try {
     const url = page.url();
 
+    // 0. Recovery phone/email SETUP interstitial ("Make sure that you can always sign in")
+    // Must run before LOGGED_IN — this page often shows an account chip that looks "logged in".
+    // Correct action is always Cancel (never Save / never fill recovery fields).
+    const isRecoverySetupPrompt = await page.evaluate(() => {
+      const text = (document.body?.innerText || '').toLowerCase();
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+      const hasCancel = buttons.some((b) => {
+        const t = (b.innerText || b.textContent || '').trim().toLowerCase();
+        return t === 'cancel';
+      });
+      if (!hasCancel) return false;
+      return (
+        text.includes('make sure that you can always sign in') ||
+        text.includes('your recovery info is used to reach you') ||
+        (text.includes('add a recovery email') && (
+          text.includes('your recovery phone') || text.includes('recovery phone')
+        ))
+      );
+    }).catch(() => false);
+
+    if (isRecoverySetupPrompt) {
+      return {
+        type: 'RECOVERY_SETUP_PROMPT',
+        description: 'Recovery phone/email setup interstitial — dismiss with Cancel'
+      };
+    }
+
     // 1. Check if already logged in
     const loggedInInfo = await page.evaluate((expectedEmail) => {
       const u = window.location.href;
@@ -723,7 +750,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
       const isSecurityCodePage = bodyText.includes('g.co/sc') || bodyText.includes('get your security code');
       if (isSecurityCodePage) return false;
 
-      const dismissTexts = ['not now', 'confirm', 'done', 'continue'];
+      const dismissTexts = ['not now', 'cancel', 'skip', 'confirm', 'done', 'continue'];
       const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
       for (const b of buttons) {
         const t = (b.innerText || b.textContent || '').trim().toLowerCase();
@@ -733,7 +760,7 @@ async function detectCurrentPageStatus(page, targetEmail) {
     });
 
     if (hasPostLoginPrompt && !url.includes('/challenge/') && !url.includes('g.co/sc')) {
-      return { type: 'POST_LOGIN_PROMPT', description: 'Additional Google prompt (Not now / Confirm)' };
+      return { type: 'POST_LOGIN_PROMPT', description: 'Additional Google prompt (Not now / Cancel / Continue)' };
     }
 
     // 7. 2FA Challenge screens
@@ -765,9 +792,15 @@ async function detectCurrentPageStatus(page, targetEmail) {
         return '2FA_BACKUP_INPUT';
       }
 
-      const hasRecoveryInput = !!document.querySelector('input[name="knowledgePreregisteredEmailResponse"], input#knowledge-preregistered-email-response, input[aria-label*="recovery email" i]');
-      const mentionsRecovery = text.includes('recovery email') || text.includes('confirm the recovery email');
-      if (hasRecoveryInput || (mentionsRecovery && !isSelectionUrl && anyInput)) {
+      // Strict 2FA "confirm YOUR recovery email" challenge only — NOT the "Add a recovery email" setup interstitial
+      const hasRecoveryConfirmInput = !!document.querySelector(
+        'input[name="knowledgePreregisteredEmailResponse"], input#knowledge-preregistered-email-response'
+      );
+      const mentionsConfirmRecovery =
+        text.includes('confirm the recovery email') ||
+        text.includes('confirm your recovery email') ||
+        (text.includes('recovery email') && text.includes('associated with your account'));
+      if (hasRecoveryConfirmInput || (mentionsConfirmRecovery && !isSelectionUrl && anyInput && !text.includes('add a recovery email'))) {
         return 'RECOVERY_EMAIL_CHALLENGE';
       }
 
@@ -858,13 +891,55 @@ async function handleLandingPageIfPresent(currentTab, currentCursor, smartClick,
 async function handleGooglePostLoginPrompts(currentTab) {
   try {
     const clicked = await clickElementByText(currentTab, 'button, [role="button"], a', [
-      'not now', 'cancel', 'confirm', 'done', 'continue'
+      'not now', 'cancel', 'skip', 'confirm', 'done', 'continue'
     ]);
     if (clicked) {
-      console.log('👉 Skipping additional Google notice ("Not now / Continue")...');
+      console.log('👉 Skipping additional Google notice ("Not now / Cancel / Continue")...');
       await sleep(2000);
     }
   } catch (e) {}
+}
+
+/**
+ * Dismiss Google recovery phone/email SETUP interstitial by clicking Cancel only.
+ * Never clicks Save and never fills recovery fields.
+ * @returns {Promise<boolean>}
+ */
+async function dismissRecoverySetupPrompt(currentTab) {
+  try {
+    // Prefer exact "Cancel" label (avoid matching Save / other actions)
+    const clickedExact = await currentTab.evaluate(() => {
+      const candidates = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+      for (const el of candidates) {
+        const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+        if (t === 'cancel') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.click();
+          return true;
+        }
+      }
+      return false;
+    }).catch(() => false);
+
+    if (clickedExact) {
+      console.log('👉 Clicked Cancel on recovery setup interstitial.');
+      await sleep(2500);
+      return true;
+    }
+
+    const clicked = await clickElementByText(currentTab, 'button, [role="button"], a', ['cancel']);
+    if (clicked) {
+      console.log('👉 Clicked Cancel (fallback) on recovery setup interstitial.');
+      await sleep(2500);
+      return true;
+    }
+
+    console.warn('⚠️ Recovery setup Cancel button not found.');
+    return false;
+  } catch (e) {
+    console.warn('⚠️ Failed to dismiss recovery setup prompt:', e.message);
+    return false;
+  }
 }
 
 /**
@@ -1165,8 +1240,17 @@ async function ensureGoogleLoggedIn({
         break;
       }
 
+      case 'RECOVERY_SETUP_PROMPT': {
+        console.log('🛡️ [Page Decision] Recovery phone/email setup interstitial detected.');
+        console.log('👉 Clicking Cancel (skip setup — no recovery email import required)...');
+        await dismissRecoverySetupPrompt(currentTab);
+        if (syncActiveTab) await syncActiveTab();
+        await sleep(1500);
+        break;
+      }
+
       case 'POST_LOGIN_PROMPT': {
-        console.log('👉 [Page Decision] Google showing post-login prompt. Skipping "Not now / Continue"...');
+        console.log('👉 [Page Decision] Google showing post-login prompt. Skipping "Not now / Cancel / Continue"...');
         await handleGooglePostLoginPrompts(currentTab);
         await sleep(2000);
         break;
@@ -1414,6 +1498,7 @@ module.exports = {
   findTotpInput,
   handleLandingPageIfPresent,
   handleGooglePostLoginPrompts,
+  dismissRecoverySetupPrompt,
   naturalBrowseToGmail,
   generateTOTP,
   isValidSecret

@@ -394,7 +394,7 @@ function filterReloadedTileClicks(clicks, reloadedTiles) {
  * @returns {Promise<{ incorrect: boolean, selectMore: boolean, dynamicMore: boolean }>}
  */
 async function getChallengeErrorState(frame) {
-  const empty = { incorrect: false, selectMore: false, dynamicMore: false };
+  const empty = { incorrect: false, selectMore: false, dynamicMore: false, expired: false };
   if (!frame || typeof frame.evaluate !== 'function') return empty;
   return await frame.evaluate(() => {
     const isVisible = (sel) => {
@@ -404,12 +404,99 @@ async function getChallengeErrorState(frame) {
       if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
       return (el.innerText || '').trim().length > 0 || el.offsetParent !== null;
     };
+    const bodyText = (document.body?.innerText || '').toLowerCase();
     return {
       incorrect: isVisible('.rc-imageselect-incorrect-response'),
       selectMore: isVisible('.rc-imageselect-error-select-more') || isVisible('.rc-imageselect-error-select-something'),
-      dynamicMore: isVisible('.rc-imageselect-error-dynamic-more')
+      dynamicMore: isVisible('.rc-imageselect-error-dynamic-more'),
+      expired:
+        bodyText.includes('verification challenge expired') ||
+        bodyText.includes('check the checkbox again') ||
+        isVisible('.rc-anchor-error-msg')
     };
   }).catch(() => empty);
+}
+
+/**
+ * Detects reCAPTCHA "Verification challenge expired. Check the checkbox again."
+ * on the main page or any iframe (usually the anchor widget).
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function isRecaptchaExpired(page) {
+  if (!page) return false;
+  try {
+    const onPage = await page.evaluate(() => {
+      const t = (document.body?.innerText || '').toLowerCase();
+      return (
+        t.includes('verification challenge expired') ||
+        (t.includes('challenge expired') && t.includes('checkbox')) ||
+        t.includes('check the checkbox again')
+      );
+    }).catch(() => false);
+    if (onPage) return true;
+
+    if (typeof page.frames !== 'function') return false;
+    for (const frame of page.frames()) {
+      if (!frame || (typeof frame.isDetached === 'function' && frame.isDetached())) continue;
+      const inFrame = await frame.evaluate(() => {
+        const errEl = document.querySelector('.rc-anchor-error-msg, .rc-anchor-error-msg-container');
+        const t = ((errEl && (errEl.innerText || errEl.textContent)) || document.body?.innerText || '').toLowerCase();
+        return (
+          t.includes('verification challenge expired') ||
+          t.includes('challenge expired') ||
+          t.includes('check the checkbox again') ||
+          !!document.querySelector('.rc-anchor-error-msg:not([style*="display: none"])')
+        );
+      }).catch(() => false);
+      if (inFrame) return true;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Expired-challenge recovery: re-open the checkbox, then solve via audio (not image grid).
+ * @param {import('rebrowser-puppeteer-core').Page} page
+ * @param {string} apiKey
+ * @returns {Promise<boolean>}
+ */
+async function recoverExpiredViaAudio(page, apiKey) {
+  if (!page || !apiKey) return false;
+
+  console.log('⏰ [2Captcha]: Challenge expired → re-checking checkbox, then audio fallback...');
+
+  await triggerRecaptchaCheckbox(page);
+  await sleep(randomBetween(1800, 2800));
+
+  if (await isRecaptchaPassed(page)) {
+    console.log('🎉 [2Captcha]: Passed after re-checking expired checkbox.');
+    return true;
+  }
+
+  const challengeInfo = await isFoundRecaptchaChallengeFrame(page, 12000);
+  if (challengeInfo.dosBlocked) {
+    console.warn('⚠️ [2Captcha]: DOS block after expired recovery — cannot use audio.');
+    return false;
+  }
+  if (!challengeInfo.found || !challengeInfo.frame) {
+    // Checkbox may have opened a fresh challenge slowly — one more click attempt
+    await triggerRecaptchaCheckbox(page);
+    await sleep(randomBetween(2000, 3000));
+    if (await isRecaptchaPassed(page)) return true;
+    const retry = await isFoundRecaptchaChallengeFrame(page, 8000);
+    if (!retry.found || !retry.frame) {
+      console.warn('⚠️ [2Captcha]: No challenge frame after expired checkbox re-check.');
+      return false;
+    }
+    console.log('🎧 [2Captcha]: Expired recovery → audio fallback.');
+    return await solveRecaptchaViaAudio(page, retry.frame, apiKey);
+  }
+
+  console.log('🎧 [2Captcha]: Expired recovery → audio fallback.');
+  return await solveRecaptchaViaAudio(page, challengeInfo.frame, apiKey);
 }
 
 /**
@@ -661,7 +748,7 @@ async function triggerRecaptchaCheckbox(page) {
 async function solveRecaptchaViaAudio(page, frame, apiKey) {
   if (!apiKey || !page || !frame) return false;
 
-  console.log('🎧 [2Captcha Audio]: Dynamic tile fallback — switching to audio challenge...');
+  console.log('🎧 [2Captcha Audio]: Audio fallback — switching to audio challenge...');
 
   const switched = await frame.evaluate(() => {
     const btn = document.querySelector('#recaptcha-audio-button, button#recaptcha-audio-button');
@@ -839,6 +926,11 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
 
   console.log('🧩 [2Captcha Clicks]: Initializing interactive click-based reCAPTCHA solver...');
 
+  // 0. Expired widget ("Verification challenge expired") → re-check + audio fallback
+  if (await isRecaptchaExpired(page)) {
+    return await recoverExpiredViaAudio(page, apiKey);
+  }
+
   // 1. Trigger anchor checkbox if present
   await triggerRecaptchaCheckbox(page);
 
@@ -846,6 +938,11 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
   if (await isRecaptchaPassed(page)) {
     console.log('🎉 [2Captcha Clicks]: reCAPTCHA passed immediately without image challenge!');
     return true;
+  }
+
+  // Expired can appear right after a stalled checkbox click
+  if (await isRecaptchaExpired(page)) {
+    return await recoverExpiredViaAudio(page, apiKey);
   }
 
   // 3. Locate challenge bframe
@@ -856,6 +953,9 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
     }
     if (await isRecaptchaPassed(page)) {
       return true;
+    }
+    if (await isRecaptchaExpired(page)) {
+      return await recoverExpiredViaAudio(page, apiKey);
     }
     console.warn('⚠️ [2Captcha Clicks]: reCAPTCHA challenge bframe not found on page.');
     return false;
@@ -888,6 +988,12 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       firstTaskId = null;
     }
 
+    // Mid-solve expiry on the page/anchor → re-check checkbox + audio
+    // (do not call getChallengeErrorState here — that would consume one-shot error flags)
+    if (await isRecaptchaExpired(page)) {
+      return await recoverExpiredViaAudio(page, apiKey);
+    }
+
     // Audio fallback is ONLY for the reload-on-click (dynamic tile) challenge, after 8 rounds.
     if (isDynamic && dynamicRounds >= audioAfter) {
       console.log(`🎧 [2Captcha Clicks]: Dynamic tile still unsolved after ${dynamicRounds} rounds → audio fallback.`);
@@ -901,11 +1007,17 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       console.warn(`⚠️ [2Captcha Clicks]: Failed to extract captcha params in round ${attempts}:`, extractErr.message);
       await sleep(2000);
       if (await isRecaptchaPassed(page)) return true;
+      if (await isRecaptchaExpired(page)) {
+        return await recoverExpiredViaAudio(page, apiKey);
+      }
       break;
     }
 
     if (!captchaParams || !captchaParams.body) {
       console.warn('⚠️ [2Captcha Clicks]: Empty captcha image received from extractor.');
+      if (await isRecaptchaExpired(page)) {
+        return await recoverExpiredViaAudio(page, apiKey);
+      }
       break;
     }
 
@@ -994,10 +1106,16 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
       const stillActive = await isFoundRecaptchaChallengeFrame(page, 3000);
       if (!stillActive.found) {
         if (await isRecaptchaPassed(page)) return true;
+        if (await isRecaptchaExpired(page)) {
+          return await recoverExpiredViaAudio(page, apiKey);
+        }
         break;
       }
 
       const errState = await getChallengeErrorState(frame);
+      if (errState.expired || await isRecaptchaExpired(page)) {
+        return await recoverExpiredViaAudio(page, apiKey);
+      }
       if (errState.dynamicMore) {
         console.log('🔄 [2Captcha Clicks]: New images appeared after verify — continuing dynamic rounds...');
         reloadedTiles = null;
@@ -1092,6 +1210,9 @@ async function solveRecaptchaViaClicks(page, apiKey, options = {}) {
   }
 
   if (await isRecaptchaPassed(page)) return true;
+  if (await isRecaptchaExpired(page)) {
+    return await recoverExpiredViaAudio(page, apiKey);
+  }
   if (dynamicRounds >= audioAfter) {
     console.log(`🎧 [2Captcha Clicks]: Dynamic tile still unsolved after ${dynamicRounds} rounds → audio fallback.`);
     return await solveRecaptchaViaAudio(page, frame, apiKey);
@@ -1444,6 +1565,7 @@ async function handlePageCaptcha(page, options = {}) {
 module.exports = {
   detectCaptcha,
   isRecaptchaPassed,
+  isRecaptchaExpired,
   isFoundRecaptchaChallengeFrame,
   initCaptchaParamsExtractor,
   getCaptchaParams,
@@ -1454,6 +1576,7 @@ module.exports = {
   clickAtCoordinates,
   clickRecaptchaVerifyButton,
   triggerRecaptchaCheckbox,
+  recoverExpiredViaAudio,
   solveRecaptchaViaClicks,
   solveRecaptchaViaAudio,
   DYNAMIC_AUDIO_AFTER_ROUNDS,

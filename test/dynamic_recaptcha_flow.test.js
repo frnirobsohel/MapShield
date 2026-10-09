@@ -50,7 +50,12 @@ require.cache[TWOCAPTCHA_PATH] = {
   exports: { Solver: FakeSolver }
 };
 
-const { solveRecaptchaViaClicks, getChallengeType, filterReloadedTileClicks } = require(SOLVER_PATH);
+const {
+  solveRecaptchaViaClicks,
+  getChallengeType,
+  filterReloadedTileClicks,
+  isRecaptchaExpired
+} = require(SOLVER_PATH);
 
 /**
  * Fake frame whose evaluate() runs the real in-browser callback against a stub DOM
@@ -114,9 +119,9 @@ function makeHarness(style) {
       if (src.includes('rc-imageselect-incorrect-response')) {
         if (state.fireDynamicMoreOnce) {
           state.fireDynamicMoreOnce = false;
-          return { incorrect: false, selectMore: false, dynamicMore: true };
+          return { incorrect: false, selectMore: false, dynamicMore: true, expired: false };
         }
-        return { incorrect: false, selectMore: false, dynamicMore: false };
+        return { incorrect: false, selectMore: false, dynamicMore: false, expired: !!state.forceExpiredInBframe };
       }
       // waitForClickedTilesReloaded — must not fall through to the cell-rect stub
       if (src.includes('rc-image-tile-11') && src.includes('indices.every')) return true;
@@ -348,5 +353,38 @@ test('DYNAMIC: audio fallback runs only after 8 unsolved tile rounds', async () 
   assert.strictEqual(audioCalls[0].body, 'FAKEAUDIO64');
   assert.strictEqual(audioCalls[0].lang, 'en');
   assert.strictEqual(state.audioClicked, true, 'must switch to the headphone/audio challenge');
+  assert.strictEqual(state.audioTyped, 'seven four two');
+});
+
+test('isRecaptchaExpired: detects anchor expired message', async () => {
+  const page = {
+    evaluate: async (fn) => {
+      const document = {
+        body: { innerText: 'Verification challenge expired. Check the checkbox again.\nI\'m not a robot' }
+      };
+      const sandbox = { document };
+      vm.createContext(sandbox);
+      return new vm.Script('(' + fn.toString() + ')()').runInContext(sandbox);
+    },
+    frames: () => []
+  };
+  assert.strictEqual(await isRecaptchaExpired(page), true);
+});
+
+test('EXPIRED: uses audio fallback immediately (no image grid rounds)', async () => {
+  const { page, state } = makeHarness('dynamic');
+  const origEval = page.evaluate.bind(page);
+  page.evaluate = async (fn, ...args) => {
+    const src = typeof fn === 'function' ? fn.toString() : String(fn);
+    if (src.includes('verification challenge expired')) return true;
+    return origEval(fn, ...args);
+  };
+
+  const result = await solveRecaptchaViaClicks(page, 'TEST_KEY', { maxAttempts: 12 });
+
+  assert.strictEqual(result, true, 'expired recovery + audio must solve');
+  assert.strictEqual(gridCalls.length, 0, 'must not burn image rounds when challenge is already expired');
+  assert.strictEqual(audioCalls.length, 1, 'audio API must run as expire fallback');
+  assert.strictEqual(state.audioClicked, true, 'must open audio challenge');
   assert.strictEqual(state.audioTyped, 'seven four two');
 });

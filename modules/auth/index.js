@@ -17,6 +17,7 @@ module.exports = {
   findTotpInput: googleAuth.findTotpInput,
   handleLandingPageIfPresent: googleAuth.handleLandingPageIfPresent,
   handleGooglePostLoginPrompts: googleAuth.handleGooglePostLoginPrompts,
+  dismissRecoverySetupPrompt: googleAuth.dismissRecoverySetupPrompt,
   naturalBrowseToGmail: googleAuth.naturalBrowseToGmail,
   generateTOTP: googleAuth.generateTOTP,
   isValidSecret: googleAuth.isValidSecret
