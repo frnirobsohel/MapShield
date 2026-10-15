@@ -306,6 +306,47 @@
               </div>
             </div>
 
+            <!-- TASK CONCURRENCY & PARALLEL EXECUTION CARD -->
+            <div class="card form-card">
+              <div class="card-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                  </svg>
+                  <h2 style="font-size: 1.05rem; font-weight: 600;">Task Concurrency & Parallel Execution</h2>
+                </div>
+                <span id="concurrencyBadge" class="badge badge-info">1 Worker (Sequential)</span>
+              </div>
+              <p class="card-desc">Control how many reporting jobs and browser windows run simultaneously. Each parallel worker operates independently with its own Google account and isolated session.</p>
+
+              <div class="form-group">
+                <label for="selectConcurrency">Max Concurrent Tasks / Workers</label>
+                <select id="selectConcurrency" class="custom-select">
+                  <option value="1" selected>1 Task (Sequential - Safe &amp; Recommended)</option>
+                  <option value="2">2 Parallel Tasks (2x Speed - Dual Browsers)</option>
+                  <option value="3">3 Parallel Tasks (3x Speed - High Throughput)</option>
+                  <option value="4">4 Parallel Tasks (4x Speed - Multi-Worker)</option>
+                  <option value="5">5 Parallel Tasks (5x Speed - Maximum Power)</option>
+                </select>
+                <span class="input-help">Each concurrent worker runs a separate browser instance with unique account credentials. Multi-tasking requires adequate system RAM.</span>
+              </div>
+
+              <div class="button-row mt-20">
+                <button type="button" id="btnSaveConcurrency" class="btn btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  <span>Save Concurrency Setting</span>
+                </button>
+              </div>
+
+              <div id="concurrencyToast" class="toast-msg"></div>
+            </div>
+
             <!-- AI API KEY PANE (Moved here from separate tab) -->
             <div class="card form-card">
               <div class="card-header">

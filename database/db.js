@@ -693,7 +693,13 @@ class DatabaseService {
       legalCountry: 'United States',
       captchaProvider: '2captcha',
       captchaApiKey: '',
-      captchaAutoSolve: true
+      captchaAutoSolve: true,
+      // Job timing (ms) — overridable via saveSettings / payload
+      jobCooldownMinMs: '5000',
+      jobCooldownMaxMs: '10000',
+      successHoldMs: '2000',
+      // Parallel execution concurrency (number of simultaneous tasks/browsers)
+      concurrency: 1
     };
 
     try {
@@ -704,6 +710,8 @@ class DatabaseService {
           defaultSettings[row.key] = row.value === 'true' || row.value === '1';
         } else if (row.key === 'urls') {
           try { defaultSettings.urls = JSON.parse(row.value); } catch (e) { defaultSettings.urls = [row.value]; }
+        } else if (row.key === 'concurrency') {
+          defaultSettings.concurrency = Math.max(1, parseInt(row.value, 10) || 1);
         } else if (row.key === 'aiApiKey' || row.key === 'captchaApiKey') {
           // Decrypt sensitive API keys on read
           defaultSettings[row.key] = decrypt(row.value);

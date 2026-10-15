@@ -1417,6 +1417,23 @@ async function injectRecaptchaToken(page, token) {
 }
 
 /**
+ * Whether CAPTCHA should use 2Captcha TOKEN API.
+ * TOKEN is Legal-form only (or explicit preferToken from legal reporter).
+ * Login / Maps /sorry/ use click+audio — never token by URL alone.
+ * @param {string} currentUrl
+ * @param {Object} [options]
+ * @returns {boolean}
+ */
+function shouldPreferCaptchaToken(currentUrl = '', options = {}) {
+  if (options.preferToken === true || options.method === 'token') return true;
+  const u = String(currentUrl || '');
+  return (
+    u.includes('reportcontent.google.com') ||
+    u.includes('/contact/lr_')
+  );
+}
+
+/**
  * Universal Auto-Solver Orchestrator
  * Checks for CAPTCHA on page, triggers Token API solver for standard web forms (e.g. Legal Form)
  * or interactive click-based solver for challenges, and handles form submission.
@@ -1425,7 +1442,7 @@ async function injectRecaptchaToken(page, token) {
  * @param {Object} [options]
  * @param {string} [options.apiKey] 2Captcha API Key
  * @param {boolean} [options.autoSolve=true]
- * @param {boolean} [options.preferToken=false] Force direct Token API solving (e.g. for Google Legal Form)
+ * @param {boolean} [options.preferToken=false] Force Token API (Legal form only)
  * @param {number} [options.timeoutMs]
  * @returns {Promise<{ handled: boolean, solved: boolean, method: string }>}
  */
@@ -1463,14 +1480,11 @@ async function handlePageCaptcha(page, options = {}) {
   }
 
   const currentUrl = typeof page.url === 'function' ? page.url() : '';
-  const isLegalForm = options.preferToken === true ||
-                      options.method === 'token' ||
-                      currentUrl.includes('reportcontent.google.com') ||
-                      currentUrl.includes('/contact/lr_');
+  const preferTokenContext = shouldPreferCaptchaToken(currentUrl, options);
 
-  // 2. Token-Based API Solver for Standard Web Forms (Google Legal Removal Form, contact forms)
-  if (autoSolve && apiKey && isLegalForm && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
-    console.log('🧩 [CAPTCHA Engine]: Using direct Token API for standard reCAPTCHA form...');
+  // 2. Token API — Legal removal form ONLY (login/Maps use click solver below)
+  if (autoSolve && apiKey && preferTokenContext && (detection.type === 'recaptcha' || detection.type === 'google_sorry')) {
+    console.log('🧩 [CAPTCHA Engine]: Using Token API for Legal form...');
 
     if (!detection.sitekey && typeof page.evaluate === 'function') {
       detection.sitekey = await page.evaluate(() => {
@@ -1577,6 +1591,7 @@ module.exports = {
   clickRecaptchaVerifyButton,
   triggerRecaptchaCheckbox,
   recoverExpiredViaAudio,
+  shouldPreferCaptchaToken,
   solveRecaptchaViaClicks,
   solveRecaptchaViaAudio,
   DYNAMIC_AUDIO_AFTER_ROUNDS,

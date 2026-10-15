@@ -13,6 +13,7 @@ const path = require('path');
 const { getDatabase } = require('./database/db');
 const { isNetworkError } = require('./modules/network');
 const { PROOFS_DIR, ERRORS_DIR, getLatestScreenshot } = require('./modules/helpers/screenshot_paths');
+const { resolveJobCooldownMs } = require('./modules/helpers/job_timing');
 
 // Helper to notify Electron parent process (with CLI direct DB fallback)
 function notifyParent(type, data) {
@@ -217,6 +218,17 @@ async function executeQueue() {
   if (payload.captchaApiKey) process.env.TWOCAPTCHA_API_KEY = payload.captchaApiKey;
   if (payload.captchaAutoSolve !== undefined) process.env.CAPTCHA_AUTO_SOLVE = payload.captchaAutoSolve ? 'true' : 'false';
 
+  // Load settings once for the whole queue (avoid per-job DB settings reads)
+  let cachedSettings = {};
+  try {
+    cachedSettings = getDatabase().getSettings() || {};
+  } catch (e) {
+    console.warn('⚠️ Settings load notice:', e.message);
+  }
+
+  // Concurrency resolution (default: 1 worker / sequential)
+  const configuredConcurrency = Math.max(1, parseInt(payload.concurrency || cachedSettings.concurrency || 1, 10));
+
   // AI configuration resolution
   let aiConfig = {
     aiProvider: payload.aiProvider,
@@ -225,21 +237,13 @@ async function executeQueue() {
     aiInspection: payload.aiInspection
   };
 
-  if (!aiConfig.aiApiKey) {
-    try {
-      const db = getDatabase();
-      const settings = db.getSettings();
-      if (settings.aiApiKey) {
-        aiConfig = {
-          aiProvider: aiConfig.aiProvider || settings.aiProvider || 'gemini',
-          aiApiKey: settings.aiApiKey,
-          aiModel: aiConfig.aiModel || settings.aiModel || 'gemini-2.0-flash',
-          aiInspection: aiConfig.aiInspection !== undefined ? aiConfig.aiInspection : (settings.aiInspection || false)
-        };
-      }
-    } catch (e) {
-      console.warn('⚠️ Settings fallback notice:', e.message);
-    }
+  if (!aiConfig.aiApiKey && cachedSettings.aiApiKey) {
+    aiConfig = {
+      aiProvider: aiConfig.aiProvider || cachedSettings.aiProvider || 'gemini',
+      aiApiKey: cachedSettings.aiApiKey,
+      aiModel: aiConfig.aiModel || cachedSettings.aiModel || 'gemini-2.0-flash',
+      aiInspection: aiConfig.aiInspection !== undefined ? aiConfig.aiInspection : (cachedSettings.aiInspection || false)
+    };
   }
 
   // Browser selection pool (for randomized browser rotation across jobs)
@@ -299,6 +303,7 @@ async function executeQueue() {
 
   console.log('🚀 Agent Runner Initialized');
   console.log(`🌐 Target Browser: ${payload.browserPath || 'Google Chrome (Default)'}`);
+  console.log(`⚡ Task Concurrency: ${configuredConcurrency} worker(s) (${configuredConcurrency > 1 ? 'Parallel Execution' : 'Sequential'})`);
   console.log(`⚖️ Report Mode: ${payload.reportType === 'legal' ? 'Report a Legal Notice' : 'Standard Policy Report (' + (payload.reportReason || 'spam') + ')'}`);
   console.log(`📋 Target Queue: ${targetUrls.length} Review URL(s) to process\n`);
 
@@ -457,20 +462,13 @@ async function executeQueue() {
 
   console.log(`📋 Resolved Task Queue: ${jobs.length} Job(s) scheduled across ${targetUrls.length} target URL(s).\n`);
 
-  let wasAbortedByNetwork = false;
-  let processedCount = 0;
-
-  for (let i = 0; i < jobs.length; i++) {
-    const currentJob = jobs[i];
+  /**
+   * Executes a single review reporting job
+   */
+  async function executeSingleJob(currentJob, index, totalJobs, workerId = null) {
     const currentUrl = currentJob.url;
     const currentAccount = currentJob.account;
-
-    notifyParent('status', {
-      text: `Processing Review ${i + 1} of ${jobs.length}${currentAccount ? ' (' + currentAccount.email + ')' : ''}`,
-      progress: Math.round(((i) / jobs.length) * 100),
-      current: i + 1,
-      total: jobs.length
-    });
+    const workerTag = workerId ? ` [Worker ${workerId}]` : '';
 
     let currentProxy = '';
     if (payload.proxy && payload.proxy.enabled) {
@@ -490,7 +488,7 @@ async function executeQueue() {
       const activePool = healthyPool.length > 0 ? healthyPool : pool;
 
       if (payload.proxy.mode === 'rotate' && activePool && activePool.length > 0) {
-        const item = activePool[i % activePool.length];
+        const item = activePool[index % activePool.length];
         currentProxy = typeof item === 'object' && item.formatted ? item.formatted : (typeof item === 'object' ? `${item.host}:${item.port}` : String(item));
       } else if (payload.proxy.server) {
         currentProxy = typeof payload.proxy.server === 'object' && payload.proxy.server.formatted ? payload.proxy.server.formatted : String(payload.proxy.server);
@@ -512,22 +510,20 @@ async function executeQueue() {
     }
 
     console.log(`\n-------------------------------------------------------`);
-    console.log(`🎯 [Job ${i + 1}/${jobs.length}] URL: ${currentUrl} (Report #${currentJob.reportNum} of ${currentJob.targetCount})`);
+    console.log(`🎯${workerTag} [Job ${index + 1}/${totalJobs}] URL: ${currentUrl} (Report #${currentJob.reportNum} of ${currentJob.targetCount})`);
     if (currentAccount) {
-      console.log(`👤 Using Account: ${currentAccount.email}`);
+      console.log(`👤${workerTag} Using Account: ${currentAccount.email}`);
     }
     if (currentProxy) {
-      console.log(`🌐 Using Proxy: ${currentProxy}`);
+      console.log(`🌐${workerTag} Using Proxy: ${currentProxy}`);
     }
     if (currentBrowserPath) {
-      console.log(`🚀 Using Browser: ${currentBrowserPath}`);
+      console.log(`🚀${workerTag} Using Browser: ${currentBrowserPath}`);
     }
     console.log(`-------------------------------------------------------\n`);
 
     try {
-      const dbSettings = (() => {
-        try { return getDatabase().getSettings(); } catch (_) { return {}; }
-      })();
+      const dbSettings = cachedSettings;
       const senderInfo = {
         fullName: payload.legalFullName || dbSettings.legalFullName || '',
         businessName: currentJob.businessName || payload.legalBusinessName || dbSettings.legalBusinessName || 'the business',
@@ -552,7 +548,8 @@ async function executeQueue() {
         senderInfo,
         captchaApiKey: payload.captchaApiKey || dbSettings.captchaApiKey || undefined,
         captchaAutoSolve: payload.captchaAutoSolve !== undefined ? payload.captchaAutoSolve : (dbSettings.captchaAutoSolve !== false),
-        isLast: i === jobs.length - 1,
+        successHoldMs: payload.successHoldMs ?? dbSettings.successHoldMs,
+        isLast: index === totalJobs - 1,
         isSubJob: true
       });
 
@@ -566,7 +563,7 @@ async function executeQueue() {
         } catch (_) {}
       }
 
-      console.log(`\n✅ [Job ${i + 1}/${jobs.length}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
+      console.log(`\n✅${workerTag} [Job ${index + 1}/${totalJobs}] Completed successfully! (${currentJob.reportNum}/${currentJob.targetCount})`);
 
       // Record Audit Entry to SQLite
       try {
@@ -603,18 +600,15 @@ async function executeQueue() {
         error: null,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
-      processedCount = i + 1;
+      return { success: true };
     } catch (err) {
-      console.error(`\n❌ [Job ${i + 1}/${jobs.length}] Error:`, err.message);
+      console.error(`\n❌${workerTag} [Job ${index + 1}/${totalJobs}] Error:`, err.message);
 
       const isNetwork = isNetworkError(err);
 
       if (isNetwork) {
-        wasAbortedByNetwork = true;
-        processedCount = i;
-
         console.error('\n' + '='.repeat(68));
-        console.error('🛑 [NETWORK DISCONNECTED] Internet connection or DNS lost!');
+        console.error(`🛑 [NETWORK DISCONNECTED]${workerTag} Internet connection or DNS lost!`);
         console.error(`⚠️ Detected Network Error: ${err.message}`);
         console.error('🛡️ [ACCOUNT SAFETY ACTIVATED]');
         console.error('🛡️ Preserving account without marking as used or failed.');
@@ -657,27 +651,15 @@ async function executeQueue() {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
 
-        notifyParent('status', {
-          text: `⚠️ Execution paused: Internet connection lost (${err.message})`,
-          progress: Math.round(((i) / jobs.length) * 100),
-          current: i,
-          total: jobs.length,
-          networkError: true
-        });
-
-        // Break loop to completely stop runner from burning subsequent accounts
-        break;
+        return { networkError: true, error: err };
       }
 
       // ── Phone Verification Wall ──────────────────────────────────────────────
-      // Google is asking for a phone number. We cannot bypass this.
-      // Safe action: skip this account silently and move on to the next job.
       const isPhoneWall = err.message && err.message.startsWith('PHONE_VERIFICATION_REQUIRED');
       if (isPhoneWall) {
-        console.warn(`\n📵 [Phone Wall] Account "${currentAccount ? currentAccount.email : 'unknown'}" requires phone verification — skipping.`);
+        console.warn(`\n📵 [Phone Wall]${workerTag} Account "${currentAccount ? currentAccount.email : 'unknown'}" requires phone verification — skipping.`);
         console.warn(`⏭️  Moving to next account in queue...\n`);
 
-        // Audit log: phone wall skip
         try {
           const db = getDatabase();
           db.recordAuditLog({
@@ -695,7 +677,6 @@ async function executeQueue() {
           console.warn('[SQLite Audit] Notice:', e.message);
         }
 
-        // Notify UI: mark account as skipped (NOT used, NOT failed — preserves reuse potential)
         if (currentAccount && currentAccount.email) {
           notifyParent('account_update', {
             email: currentAccount.email,
@@ -713,13 +694,9 @@ async function executeQueue() {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
 
-        processedCount = i + 1;
-        // continue to next job — DO NOT break, DO NOT fall through to generic failure handler
-        continue;
+        return { skipped: true, phoneWall: true };
       }
       // ─────────────────────────────────────────────────────────────────────────
-
-      processedCount = i + 1;
 
       // Record Failed Audit Entry to SQLite
       try {
@@ -743,14 +720,13 @@ async function executeQueue() {
         notifyParent('account_update', {
           email: currentAccount.email,
           status: 'failed',
-          used: false, // Strict Quota Preservation: Task was incomplete/failed, do NOT mark as used!
+          used: false,
           error: err.message || 'Login or reporting failed',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
         console.log(`🛡️ [ACCOUNT PRESERVED] Account "${currentAccount.email}" was NOT burned (preserved as unused with used: 0).`);
       }
 
-      // If a proxy was in use during this failed job, record proxy diagnostic status
       if (currentProxy) {
         try {
           const db = getDatabase();
@@ -772,14 +748,84 @@ async function executeQueue() {
         error: err.message || 'Report execution failed',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
+
+      return { failed: true, error: err };
+    }
+  }
+
+  let wasAbortedByNetwork = false;
+  let processedCount = 0;
+
+  if (configuredConcurrency <= 1) {
+    // ── Sequential Execution (Safe Single Stream) ──────────────────────────
+    for (let i = 0; i < jobs.length; i++) {
+      const currentJob = jobs[i];
+      notifyParent('status', {
+        text: `Processing Review ${i + 1} of ${jobs.length}${currentJob.account ? ' (' + currentJob.account.email + ')' : ''}`,
+        progress: Math.round(((i) / jobs.length) * 100),
+        current: i + 1,
+        total: jobs.length
+      });
+
+      const res = await executeSingleJob(currentJob, i, jobs.length, null);
+      if (res && res.networkError) {
+        wasAbortedByNetwork = true;
+        processedCount = i;
+        break;
+      }
+      processedCount = i + 1;
+
+      if (i < jobs.length - 1) {
+        const cooldownMs = resolveJobCooldownMs(cachedSettings, payload);
+        console.log(`⏱️ [Rate Limit] Cooling down for ${(cooldownMs / 1000).toFixed(1)}s before next job...`);
+        await new Promise(r => setTimeout(r, cooldownMs));
+      }
+    }
+  } else {
+    // ── High-Throughput Concurrent Execution (Worker Pool) ─────────────────
+    const poolSize = Math.min(configuredConcurrency, jobs.length);
+    console.log(`🚀 [Concurrency Pool] Distributing ${jobs.length} job(s) across ${poolSize} concurrent worker(s)...\n`);
+
+    let nextJobIndex = 0;
+    let completedJobsCount = 0;
+    let networkHalt = false;
+
+    async function workerLoop(workerId) {
+      while (nextJobIndex < jobs.length && !networkHalt) {
+        const jobIndex = nextJobIndex++;
+        if (jobIndex >= jobs.length) break;
+        const currentJob = jobs[jobIndex];
+
+        notifyParent('status', {
+          text: `Worker ${workerId}: Processing Job ${jobIndex + 1}/${jobs.length}${currentJob.account ? ' (' + currentJob.account.email + ')' : ''}`,
+          progress: Math.round((completedJobsCount / jobs.length) * 100),
+          current: completedJobsCount + 1,
+          total: jobs.length
+        });
+
+        const res = await executeSingleJob(currentJob, jobIndex, jobs.length, workerId);
+        completedJobsCount++;
+        processedCount = completedJobsCount;
+
+        if (res && res.networkError) {
+          networkHalt = true;
+          wasAbortedByNetwork = true;
+          break;
+        }
+
+        if (nextJobIndex < jobs.length && !networkHalt) {
+          const cooldownMs = resolveJobCooldownMs(cachedSettings, payload);
+          console.log(`⏱️ [Worker ${workerId}] Cooling down for ${(cooldownMs / 1000).toFixed(1)}s before next job...`);
+          await new Promise(r => setTimeout(r, cooldownMs));
+        }
+      }
     }
 
-    // Rate limiting: Add cooldown between successive jobs to reduce Google detection risk
-    if (i < jobs.length - 1) {
-      const cooldownMs = Math.floor(Math.random() * 7000) + 8000; // 8-15 seconds
-      console.log(`⏱️ [Rate Limit] Cooling down for ${(cooldownMs / 1000).toFixed(1)}s before next job...`);
-      await new Promise(r => setTimeout(r, cooldownMs));
+    const workerPromises = [];
+    for (let w = 1; w <= poolSize; w++) {
+      workerPromises.push(workerLoop(w));
     }
+    await Promise.all(workerPromises);
   }
 
   if (wasAbortedByNetwork) {

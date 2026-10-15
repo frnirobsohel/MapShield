@@ -108,6 +108,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const controlProgressPercent = document.getElementById('controlProgressPercent');
   const controlProgressBar = document.getElementById('controlProgressBar');
 
+  // Control Concurrency Elements
+  const selectConcurrency = document.getElementById('selectConcurrency');
+  const concurrencyBadge = document.getElementById('concurrencyBadge');
+  const btnSaveConcurrency = document.getElementById('btnSaveConcurrency');
+  const concurrencyToast = document.getElementById('concurrencyToast');
+
   // Terminals (Dashboard + Control)
   const dashConsoleOutput = document.getElementById('dashConsoleOutput');
   const btnClearDashConsole = document.getElementById('btnClearDashConsole');
@@ -508,6 +514,56 @@ document.addEventListener('DOMContentLoaded', async () => {
         activeBrowserPath.title = res.browser.path;
       }
       await loadInstalledBrowsers(res.browser.path);
+    }
+  });
+
+  // Concurrency Badge & Persistence Handlers
+  function updateConcurrencyBadge(val) {
+    if (!concurrencyBadge) return;
+    const n = parseInt(val, 10) || 1;
+    if (n === 1) {
+      concurrencyBadge.className = 'badge badge-info';
+      concurrencyBadge.textContent = '1 Worker (Sequential)';
+    } else if (n === 2) {
+      concurrencyBadge.className = 'badge badge-primary';
+      concurrencyBadge.textContent = '2 Workers (Dual)';
+    } else if (n === 3) {
+      concurrencyBadge.className = 'badge badge-purple';
+      concurrencyBadge.textContent = '3 Workers (High Speed)';
+    } else {
+      concurrencyBadge.className = 'badge badge-warning';
+      concurrencyBadge.textContent = `${n} Workers (Multi)`;
+    }
+  }
+
+  function showConcurrencyToast(msg, isSuccess = true) {
+    if (!concurrencyToast) return;
+    concurrencyToast.textContent = msg;
+    concurrencyToast.className = `toast-msg ${isSuccess ? 'toast-success' : 'toast-error'} show`;
+    setTimeout(() => {
+      concurrencyToast.className = 'toast-msg';
+    }, 3500);
+  }
+
+  selectConcurrency?.addEventListener('change', () => {
+    updateConcurrencyBadge(selectConcurrency.value);
+  });
+
+  btnSaveConcurrency?.addEventListener('click', async () => {
+    const val = parseInt(selectConcurrency?.value || '1', 10);
+    if (!window.desktopAPI?.saveConfig) {
+      showConcurrencyToast('Desktop API unavailable — could not save concurrency.', false);
+      return;
+    }
+    try {
+      const res = await window.desktopAPI.saveConfig({ concurrency: val });
+      if (res && res.success !== false) {
+        showConcurrencyToast('✅ Concurrency setting saved successfully!', true);
+      } else {
+        showConcurrencyToast('Error: ' + (res?.error || 'Failed to save concurrency'), false);
+      }
+    } catch (err) {
+      showConcurrencyToast('Error: ' + err.message, false);
     }
   });
 
@@ -1405,6 +1461,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (appConfig.legalFullName && inputLegalFullName) inputLegalFullName.value = appConfig.legalFullName;
       if (appConfig.legalBusinessName && inputLegalBusinessName) inputLegalBusinessName.value = appConfig.legalBusinessName;
       if (appConfig.legalCountry && inputLegalCountry) inputLegalCountry.value = appConfig.legalCountry;
+
+      // Concurrency Config
+      if (selectConcurrency) {
+        const savedConcurrency = String(appConfig.concurrency || '1');
+        selectConcurrency.value = savedConcurrency;
+        updateConcurrencyBadge(savedConcurrency);
+      }
 
       // Load Installed Browsers asynchronously in the background (zero blocking)
       loadInstalledBrowsers(appConfig.browserPath);
@@ -3344,7 +3407,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       ? '🛡️ Standard Report + ⚖️ AI Legal Notice (Dual)'
       : (activeMode === 'legal' ? '⚖️ Report a Legal Notice' : '🛡️ Standard Policy Violation');
     appendLogToBothTerminals(`[System] Report Mode: ${modeLabel}`);
-    appendLogToBothTerminals(`[System] Category: ${activeReason === 'ai-auto' ? '🤖 AI Auto Decision' : activeReason.toUpperCase()}`);
+    const concurrencyVal = Math.max(1, parseInt(selectConcurrency?.value || appConfig.concurrency || 1, 10));
+    appendLogToBothTerminals(`[System] Concurrency: ${concurrencyVal} worker(s) (${concurrencyVal > 1 ? 'Parallel Execution' : 'Sequential'})`);
+
     const proxyCfg = getActiveProxyConfig();
     if (proxyCfg.enabled && proxyCfg.server) {
       appendLogToBothTerminals(`[System] Proxy: ${proxyCfg.server} (${proxyCfg.mode})`);
@@ -3365,6 +3430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         browserPath: chosenBrowser,
         selectedBrowsers: selectedBrowsers,
         randomBrowser: isRandomBrowser,
+        concurrency: concurrencyVal,
         headless: false,
         aiProvider: selectAiProvider?.value || 'gemini',
         aiApiKey: inputAiKey?.value.trim() || '',
@@ -3514,17 +3580,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!data || !data.email) return;
         const target = loadedAccounts.find(a => a.email.toLowerCase() === data.email.toLowerCase());
         if (target) {
-          const isSuccess = data.status === 'success' || data.status === 'completed';
-          const shouldMarkUsed = isSuccess && data.used !== false;
-          if (shouldMarkUsed) {
-            target.used = true;
-            target.usedCount = (target.usedCount || 0) + 1;
-          } else if (data.used === false) {
-            target.used = false;
+          if (data.backupCode !== undefined) {
+            target.backupCode = data.backupCode;
           }
-          target.lastUsedAt = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          target.status = data.status; // 'success', 'failed', 'ready'
-          target.lastError = data.error || null;
+          if (data.status !== undefined) {
+            const isSuccess = data.status === 'success' || data.status === 'completed';
+            const shouldMarkUsed = isSuccess && data.used !== false;
+            if (shouldMarkUsed) {
+              target.used = true;
+              target.usedCount = (target.usedCount || 0) + 1;
+            } else if (data.used === false) {
+              target.used = false;
+            }
+            target.lastUsedAt = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            target.status = data.status; // 'success', 'failed', 'ready'
+            target.lastError = data.error || null;
+          }
           saveLoadedAccounts();
           renderAccountsTable();
           updateDashboardMetrics();

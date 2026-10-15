@@ -1064,11 +1064,28 @@ async function ensureGoogleLoggedIn({
     attachDialogAutoHandler(currentTab);
   }
 
-  // 1. Natural entry to Google
-  await naturalBrowseToGmail(currentTab, currentCursor, click, syncActiveTab);
-  if (syncActiveTab) await syncActiveTab();
-  await handleLandingPageIfPresent(currentTab, currentCursor, click, syncActiveTab);
-  if (syncActiveTab) await syncActiveTab();
+  // 1. Entry to Google — warm session skip when profile is already logged in
+  let skippedNaturalBrowse = false;
+  try {
+    await currentTab.goto('https://accounts.google.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 25000
+    }).catch(() => null);
+    await sleep(1200);
+    if (syncActiveTab) await syncActiveTab();
+    const warmStatus = await detectCurrentPageStatus(currentTab, email);
+    if (warmStatus && warmStatus.type === 'LOGGED_IN') {
+      console.log('⚡ [Warm Session] Already logged in — skipping natural browse.');
+      skippedNaturalBrowse = true;
+    }
+  } catch (_) {}
+
+  if (!skippedNaturalBrowse) {
+    await naturalBrowseToGmail(currentTab, currentCursor, click, syncActiveTab);
+    if (syncActiveTab) await syncActiveTab();
+    await handleLandingPageIfPresent(currentTab, currentCursor, click, syncActiveTab);
+    if (syncActiveTab) await syncActiveTab();
+  }
 
   console.log('\n🧠 [Smart page detector & decision engine active]...');
 
@@ -1447,9 +1464,10 @@ async function ensureGoogleLoggedIn({
       }
 
       case 'CAPTCHA': {
-        console.log('\n🧩 [Page Decision] CAPTCHA detected on Google Login! Invoking 2Captcha Auto-Solver...');
+        console.log('\n🧩 [Page Decision] CAPTCHA detected on Google Login! Invoking click/audio solver (Token API is Legal-form only)...');
         try {
           const { handlePageCaptcha } = require('../captcha/captcha_solver');
+          // Login: click + audio only — Token API reserved for Legal form
           const captchaRes = await handlePageCaptcha(currentTab, {
             apiKey: captchaApiKey,
             autoSolve: captchaAutoSolve,

@@ -140,6 +140,12 @@ function registerAgentIpc({ mainWindow, app, getDatabase }) {
               console.warn('[SQLite] link_update error:', e.message);
             }
             mainWindow.webContents.send('link:update', msg.data);
+          } else if (msg.type === 'account_backup_codes_updated') {
+            // Child already persisted remaining codes — notify UI only
+            mainWindow.webContents.send('account:update', {
+              email: msg.email,
+              backupCode: msg.remainingBackupCodes
+            });
           }
         }
       });

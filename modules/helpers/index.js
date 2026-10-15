@@ -9,6 +9,7 @@ const domUtils = require('./dom_utils');
 const domObserver = require('./dom_observer');
 const screenshotPaths = require('./screenshot_paths');
 const cryptoUtils = require('./crypto_utils');
+const jobTiming = require('./job_timing');
 
 module.exports = {
   // Biometrics & Human Dynamics
@@ -53,6 +54,10 @@ module.exports = {
   // Crypto Utilities
   encrypt: cryptoUtils.encrypt,
   decrypt: cryptoUtils.decrypt,
-  isEncrypted: cryptoUtils.isEncrypted
+  isEncrypted: cryptoUtils.isEncrypted,
+
+  // Job timing (cooldown / success hold)
+  resolveJobCooldownMs: jobTiming.resolveJobCooldownMs,
+  resolveSuccessHoldMs: jobTiming.resolveSuccessHoldMs
 };
 

@@ -29,14 +29,13 @@ const {
   BrowserManager,
   captureErrorScreenshot,
   isNetworkError,
-  isPageOffline
+  isPageOffline,
+  resolveSuccessHoldMs
 } = require('./modules');
 
-let browserInstance = null;
-let currentTab = null;
-let currentCursor = null;
-let activeProxyAuth = null;
-let activeUserAgentProfile = null;
+// Concurrency-safe registry for all running browser instances
+const activeBrowserInstances = new Set();
+let browserInstance = null; // Legacy compatibility reference for single-run/CLI inspection
 
 /**
  * Terminal input prompt helper
@@ -57,53 +56,51 @@ function promptUser(query) {
 }
 
 /**
- * Ensures active tab tracking when Chrome navigates or opens popups
- */
-async function syncActiveTab() {
-  if (!browserInstance) return;
-  const allPages = await browserInstance.pages().catch(() => []);
-  if (allPages.length <= 1) return;
-
-  // Target newly created tab or popup (last in list)
-  let targetPage = allPages[allPages.length - 1];
-
-  if (targetPage && targetPage !== currentTab) {
-    console.log('🔄 New tab detected! Switching active tab...');
-
-    // Close marketing/landing tabs
-    for (const p of allPages) {
-      if (p !== targetPage && (p.url().includes('workspace.google.com') || p.url().includes('gmail/about'))) {
-        console.log('🗑️ Previous landing page closed.');
-        await p.close().catch(() => {});
-      }
-    }
-
-    currentTab = targetPage;
-    if (activeProxyAuth && activeProxyAuth.username) {
-      await currentTab.authenticate(activeProxyAuth).catch(() => {});
-    }
-    await currentTab.bringToFront().catch(() => {});
-    if (activeUserAgentProfile) {
-      await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
-    }
-    attachDialogAutoHandler(currentTab);
-    await applyDeepStealth(currentTab);
-    currentCursor = createCursor(currentTab);
-    console.log('✅ Current active page: ' + currentTab.url());
-  }
-}
-
-/**
- * Smart Click wrapper tied to active tab & cursor
- */
-async function smartClick(target) {
-  return domSmartClick(currentTab, currentCursor, target, syncActiveTab);
-}
-
-/**
  * Core Agent Execution Routine
  */
 async function runAgentCore(options = {}) {
+  // Instance-local variables for isolated concurrent execution
+  let localBrowser = null;
+  let currentTab = null;
+  let currentCursor = null;
+  let activeProxyAuth = null;
+  let activeUserAgentProfile = null;
+
+  async function syncActiveTab() {
+    if (!localBrowser) return;
+    const allPages = await localBrowser.pages().catch(() => []);
+    if (allPages.length <= 1) return;
+
+    let targetPage = allPages[allPages.length - 1];
+    if (targetPage && targetPage !== currentTab) {
+      console.log('🔄 New tab detected! Switching active tab...');
+
+      for (const p of allPages) {
+        if (p !== targetPage && (p.url().includes('workspace.google.com') || p.url().includes('gmail/about'))) {
+          console.log('🗑️ Previous landing page closed.');
+          await p.close().catch(() => {});
+        }
+      }
+
+      currentTab = targetPage;
+      if (activeProxyAuth && activeProxyAuth.username) {
+        await currentTab.authenticate(activeProxyAuth).catch(() => {});
+      }
+      await currentTab.bringToFront().catch(() => {});
+      if (activeUserAgentProfile) {
+        await currentTab.setUserAgent(activeUserAgentProfile.ua, activeUserAgentProfile.metadata).catch(() => {});
+      }
+      attachDialogAutoHandler(currentTab);
+      await applyDeepStealth(currentTab);
+      currentCursor = createCursor(currentTab);
+      console.log('✅ Current active page: ' + currentTab.url());
+    }
+  }
+
+  async function smartClick(target) {
+    return domSmartClick(currentTab, currentCursor, target, syncActiveTab);
+  }
+
   let accountId = options.accountId;
   let email = options.email;
   let password = options.password;
@@ -135,12 +132,20 @@ async function runAgentCore(options = {}) {
     console.log(`🎲 [Random Browser] Selected: ${browserPath}`);
   }
 
+  // Load settings once (cached for this job — avoid repeated DB reads)
+  let cachedSettings = {};
+  try {
+    cachedSettings = require('./database/db').getDatabase().getSettings() || {};
+  } catch (_) {
+    cachedSettings = {};
+  }
+
   // Fallback to SQLite Database if values not provided in options
   if (!email || !reviewUrl || !reportReason || !browserPath || !aiOptions.aiApiKey || !captchaApiKey) {
     try {
       const { getDatabase } = require('./database/db');
       const db = getDatabase();
-      const settings = db.getSettings();
+      const settings = cachedSettings;
       const accounts = db.getAccounts();
       const links = db.getLinks();
 
@@ -306,7 +311,9 @@ async function runAgentCore(options = {}) {
     diskCacheDir: tempCacheDir,
     args: ['--disable-infobars']
   });
-  browserInstance = launched.browser;
+  localBrowser = launched.browser;
+  activeBrowserInstances.add(localBrowser);
+  browserInstance = localBrowser;
   currentTab = launched.page;
 
   if (activeProxyAuth && activeProxyAuth.username) {
@@ -314,7 +321,7 @@ async function runAgentCore(options = {}) {
   }
 
   // Query actual launched browser version to align User-Agent and Client Hints perfectly (zero mismatch)
-  const actualBrowserVersion = await browserInstance.version().catch(() => null);
+  const actualBrowserVersion = await localBrowser.version().catch(() => null);
   activeUserAgentProfile = uaManager.get_user_agent_profile({
     os: 'windows',
     actualVersion: actualBrowserVersion
@@ -334,7 +341,7 @@ async function runAgentCore(options = {}) {
   await applyDeepStealth(currentTab);
 
   // Automatically switch tab, synchronize User-Agent & authenticate if Chrome opens a new tab
-  browserInstance.on('targetcreated', async (target) => {
+  localBrowser.on('targetcreated', async (target) => {
     try {
       if (target.type() === 'page') {
         const newPage = await target.page().catch(() => null);
@@ -444,7 +451,11 @@ async function runAgentCore(options = {}) {
       } catch (_) {}
     }
 
-    await sleep(5000);
+    const holdMs = resolveSuccessHoldMs(cachedSettings, options);
+    if (holdMs > 0) {
+      console.log(`⏳ Success hold ${(holdMs / 1000).toFixed(1)}s before closing browser...`);
+      await sleep(holdMs);
+    }
 
   } catch (error) {
     let finalError = error;
@@ -481,11 +492,12 @@ async function runAgentCore(options = {}) {
 
     throw finalError;
   } finally {
-    if (browserInstance) {
-      await browserInstance.close().catch(() => {});
+    if (localBrowser) {
+      activeBrowserInstances.delete(localBrowser);
+      if (browserInstance === localBrowser) browserInstance = null;
+      await localBrowser.close().catch(() => {});
       console.log('👋 Browser closed.');
     }
-    browserInstance = null;
     currentTab = null;
     currentCursor = null;
     activeProxyAuth = null;
@@ -515,24 +527,21 @@ async function main() {
 }
 
 async function forceCloseBrowser() {
-  if (browserInstance) {
+  const instances = Array.from(activeBrowserInstances);
+  activeBrowserInstances.clear();
+  browserInstance = null;
+  await Promise.allSettled(instances.map(async (b) => {
     try {
-      await browserInstance.close();
+      await b.close();
     } catch (e) {
       try {
-        const proc = browserInstance.process();
+        const proc = b.process();
         if (proc && !proc.killed) {
-          // Use SIGTERM on all platforms (Node.js maps this to taskkill on Windows)
           proc.kill();
         }
       } catch (err) {}
     }
-    browserInstance = null;
-  }
-  currentTab = null;
-  currentCursor = null;
-  activeProxyAuth = null;
-  activeUserAgentProfile = null;
+  }));
 }
 
 module.exports = {
