@@ -309,6 +309,8 @@ async function runAgentCore(options = {}) {
     proxyAuth: activeProxyAuth,
     userAgent: startupUa,
     diskCacheDir: tempCacheDir,
+    randomizeWindowSize: options.randomizeWindowSize !== undefined ? options.randomizeWindowSize : true,
+    staggerIndex: options.workerIndex !== undefined ? options.workerIndex : (options.accountIndex || 0),
     args: ['--disable-infobars']
   });
   localBrowser = launched.browser;
@@ -468,7 +470,11 @@ async function runAgentCore(options = {}) {
     console.error('\n❌ An error occurred:', finalError.message);
     console.log('Saving diagnostic screenshot to report_logs/errors/...');
     if (currentTab) {
-      await captureErrorScreenshot(currentTab, 'agent_error').catch(() => {});
+      await captureErrorScreenshot(currentTab, 'agent_error', {
+        stepName: 'AGENT_MAIN_EXECUTION',
+        error: finalError,
+        fullPage: true
+      }).catch(() => {});
     }
 
     // Standalone CLI execution audit log persistence on failure

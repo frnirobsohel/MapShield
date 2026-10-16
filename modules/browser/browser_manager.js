@@ -79,8 +79,36 @@ class BrowserManager {
       try { fs.mkdirSync(diskCacheDir, { recursive: true }); } catch (_) {}
     }
 
+    // Curated high-reputation standard desktop screen resolutions
+    // All sizes are >=1280px wide to prevent Google Maps from collapsing into mobile layout
+    const STANDARD_DESKTOP_RESOLUTIONS = BrowserManager.STANDARD_DESKTOP_RESOLUTIONS;
+
+    let windowSizeArg = '--start-maximized';
+    let windowPosArg = null;
+
+    const hasExplicitSize = options.args && options.args.some(a => typeof a === 'string' && a.startsWith('--window-size'));
+    const shouldRandomize = options.randomizeWindowSize === true || (options.randomizeWindowSize !== false && !headless);
+
+    if (shouldRandomize && !hasExplicitSize) {
+      const chosenRes = options.windowSize || STANDARD_DESKTOP_RESOLUTIONS[Math.floor(Math.random() * STANDARD_DESKTOP_RESOLUTIONS.length)];
+      windowSizeArg = `--window-size=${chosenRes.width},${chosenRes.height}`;
+
+      const sIndex = Math.max(0, parseInt(options.staggerIndex, 10) || 0);
+      const posX = 30 + ((sIndex * 60) % 360) + Math.floor(Math.random() * 20);
+      const posY = 30 + ((sIndex * 45) % 220) + Math.floor(Math.random() * 20);
+      windowPosArg = `--window-position=${posX},${posY}`;
+      console.log(`🖥️ [Desktop Window] Resolution: ${chosenRes.width}x${chosenRes.height} | Position: (${posX}, ${posY})`);
+    } else if (hasExplicitSize) {
+      windowSizeArg = null;
+    } else if (headless && windowSizeArg === '--start-maximized') {
+      // In headless mode without explicit size, Chromium defaults to 800x600 if start-maximized is used.
+      // Force 1080p desktop canvas to prevent Google Maps responsive mobile layout collapse.
+      windowSizeArg = '--window-size=1920,1080';
+    }
+
     const chromeArgs = [
-      '--start-maximized',
+      ...(windowSizeArg ? [windowSizeArg] : []),
+      ...(windowPosArg ? [windowPosArg] : []),
       '--no-sandbox',
       '--disable-setuid-sandbox',
       // WebRTC Leak Protection: Strictly disallow non-proxied UDP lookups
@@ -208,5 +236,15 @@ class BrowserManager {
     this.tempProfiles.clear();
   }
 }
+
+BrowserManager.STANDARD_DESKTOP_RESOLUTIONS = [
+  { width: 1920, height: 1080 }, // 1080p Full HD (~24% global)
+  { width: 1536, height: 864 },  // 125% Windows scale on 1080p (~11% global)
+  { width: 1440, height: 900 },  // 16:10 MacBook/Desktop (~7% global)
+  { width: 1366, height: 768 },  // Standard HD Laptop (~14% global)
+  { width: 1600, height: 900 },  // HD+ widescreen (~4% global)
+  { width: 1280, height: 800 },  // 16:10 compact desktop (~5% global)
+  { width: 1680, height: 1050 }  // WSXGA+ widescreen (~2% global)
+];
 
 module.exports = BrowserManager;

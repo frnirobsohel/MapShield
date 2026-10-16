@@ -8,6 +8,7 @@ const { registerAccountsIpc } = require('./accounts_ipc');
 const { registerProxiesIpc } = require('./proxies_ipc');
 const { registerLinksIpc } = require('./links_ipc');
 const { registerAgentIpc, killActiveAgentProcess } = require('./agent_ipc');
+const { registerLogsIpc } = require('./logs_ipc');
 
 function registerAllIpcHandlers(context) {
   registerSystemIpc(context);
@@ -15,6 +16,7 @@ function registerAllIpcHandlers(context) {
   registerProxiesIpc(context);
   registerLinksIpc(context);
   registerAgentIpc(context);
+  registerLogsIpc(context);
 }
 
 module.exports = {

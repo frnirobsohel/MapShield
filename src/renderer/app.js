@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'tab-account': { title: 'Account', subtitle: 'Manage bulk accounts (CSV / Excel), 2FA & backup codes' },
     'tab-proxy': { title: 'Proxy', subtitle: 'Configure HTTP, HTTPS, SOCKS5 proxies & rotation' },
     'tab-reporter': { title: 'Link', subtitle: 'Target Google Maps review links & violation categories' },
+    'tab-logs': { title: 'Reports', subtitle: 'Forensic error snapshots, full-page screenshots, HTML dumps & AI export packages' },
     'tab-ai': { title: 'API', subtitle: 'Google Gemini AI configuration for review inspection' },
     'tab-about': { title: 'About', subtitle: 'Software specifications and license activation' }
   };
@@ -20,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let proxiesTableDirty = true;
   let linksTableDirty = true;
   let aboutTabDirty = true;
+  let reportLogsDirty = false;
 
   function switchTab(tabId) {
     currentActiveTab = tabId;
@@ -39,7 +41,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Lazy render on tab activation
-    if (tabId === 'tab-account' && accountsTableDirty) {
+    if (tabId === 'tab-logs') {
+      if (window.reportLogsComponent) {
+        if (reportLogsDirty || !window.reportLogsComponent.isLoaded) {
+          reportLogsDirty = false;
+          window.reportLogsComponent.loadLogs();
+        }
+      }
+    } else if (tabId === 'tab-account' && accountsTableDirty) {
       accountsTableDirty = false;
       renderAccountsTable(true);
     } else if (tabId === 'tab-proxy' && proxiesTableDirty) {
@@ -325,7 +334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Lightbox Modal
   const proofModal = document.getElementById('proofModal');
   const modalImg = document.getElementById('modalImg');
-  const modalClose = document.getElementById('modalClose');
+  const modalClose = document.getElementById('modalClose') || document.getElementById('btnCloseProofModal');
 
   let latestProofBase64 = null;
 
@@ -3525,6 +3534,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
     checkSessionStatus();
     updateDashboardMetrics();
+    reportLogsDirty = true;
+    if (window.reportLogsComponent) {
+      window.reportLogsComponent.loadLogs();
+    }
   }
 
   btnDashStart?.addEventListener('click', triggerStartAgent);

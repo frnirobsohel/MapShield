@@ -549,6 +549,7 @@ async function executeQueue() {
         captchaApiKey: payload.captchaApiKey || dbSettings.captchaApiKey || undefined,
         captchaAutoSolve: payload.captchaAutoSolve !== undefined ? payload.captchaAutoSolve : (dbSettings.captchaAutoSolve !== false),
         successHoldMs: payload.successHoldMs ?? dbSettings.successHoldMs,
+        workerIndex: workerId !== null && workerId !== undefined ? Math.max(0, (parseInt(workerId, 10) || 1) - 1) : Math.max(0, parseInt(index, 10) || 0),
         isLast: index === totalJobs - 1,
         isSubJob: true
       });

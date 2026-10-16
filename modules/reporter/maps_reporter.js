@@ -406,7 +406,11 @@ async function runMapsReporter({
 
   if (!dotsBtn) {
     console.error('❌ Failed to locate 3-Dots button on review. Saving diagnostic screenshot to report_logs/errors/');
-    await captureErrorScreenshot(page, 'maps_dots_error');
+    await captureErrorScreenshot(page, 'maps_dots_error', {
+      stepName: 'LOCATE_3_DOTS_BUTTON',
+      selector: 'button[aria-label*="action"], button[aria-label*="More"]',
+      error: 'Failed to locate 3-Dots button on review'
+    });
     throw new Error(`Failed to locate 3-Dots (More Options) button on review page: ${targetUrl}`);
   }
 
@@ -485,7 +489,11 @@ async function runMapsReporter({
 
   if (!reportMenuItem) {
     console.error('❌ Failed to click "Report review" option. Saving diagnostic screenshot to report_logs/errors/');
-    await captureErrorScreenshot(page, 'maps_report_click_error');
+    await captureErrorScreenshot(page, 'maps_report_click_error', {
+      stepName: 'CLICK_REPORT_MENU_ITEM',
+      selector: 'div[role="menuitem"], div[jsaction*="report"]',
+      error: 'Failed to click "Report review" option from 3-dots dropdown menu'
+    });
     throw new Error('Failed to click "Report review" option from 3-dots dropdown menu');
   }
 
@@ -731,7 +739,11 @@ async function runMapsReporter({
 
   if (!reasonElement) {
     console.warn(`⚠️ Could not locate actionable "${reasonCfg.label}" option. Saving diagnostic screenshot to report_logs/errors/`);
-    await captureErrorScreenshot(reportPage, 'maps_reason_error');
+    await captureErrorScreenshot(reportPage, 'maps_reason_error', {
+      stepName: 'SELECT_VIOLATION_REASON',
+      selector: `Violation reason: ${reasonCfg.label}`,
+      error: `Could not locate or select violation reason "${reasonCfg.label}" in Google report dialog`
+    });
     throw new Error(`Could not locate or select violation reason "${reasonCfg.label}" in Google report dialog`);
   }
 
@@ -865,7 +877,11 @@ async function runMapsReporter({
 
     if (!submitted) {
       console.warn('⚠️ Submit button was not automatically found. Saving diagnostic screenshot to report_logs/errors/');
-      await captureErrorScreenshot(reportPage, 'maps_submit_btn_error').catch(() => {});
+      await captureErrorScreenshot(reportPage, 'maps_submit_btn_error', {
+        stepName: 'LOCATE_SUBMIT_BUTTON',
+        selector: 'button[type="submit"], input[type="submit"], div[role="button"][jsaction*="submit"]',
+        error: 'Submit button was not automatically found on report dialog'
+      }).catch(() => {});
     }
   }
 
@@ -900,12 +916,19 @@ async function runMapsReporter({
     console.log('ℹ️ Submit button was clicked; awaiting backend confirmation...');
   } else {
     console.warn('⚠️ Neither submit confirmation nor submit button could be confirmed.');
-    await captureErrorScreenshot(reportPage, 'maps_submit_error').catch(() => {});
+    await captureErrorScreenshot(reportPage, 'maps_submit_error', {
+      stepName: 'VERIFY_CONFIRMATION',
+      selector: 'body (confirmation text)',
+      error: 'Report submission could not be verified by confirmation response'
+    }).catch(() => {});
     throw new Error('Report submission could not be verified by confirmation response');
   }
 
   // Capture final proof screenshot
-  const proofRes = await captureProofScreenshot(reportPage, `proof_${reasonCfg.label.toLowerCase().replace(/\s+/g, '_')}`);
+  const proofRes = await captureProofScreenshot(reportPage, `proof_${reasonCfg.label.toLowerCase().replace(/\s+/g, '_')}`, {
+    stepName: 'REPORT_SUBMITTED_SUCCESS',
+    extraMeta: { reason: reasonCfg.label }
+  });
   console.log(`📸 Proof screenshot saved successfully: ${proofRes ? proofRes.filename : 'report_logs/proofs'}`);
 
   // Dismiss "Done" button if present

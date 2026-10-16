@@ -35,6 +35,14 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   startAgent: (options) => ipcRenderer.invoke('agent:start', options),
   stopAgent: () => ipcRenderer.invoke('agent:stop'),
   getAuditLogs: (limit) => ipcRenderer.invoke('audit:get', limit),
+
+  // Report Logs & Forensic Diagnostics APIs
+  getReportLogs: () => ipcRenderer.invoke('logs:getAll'),
+  clearReportLogs: (type) => ipcRenderer.invoke('logs:clear', type),
+  exportReportLogs: () => ipcRenderer.invoke('logs:export'),
+  openReportLogItem: (targetPath) => ipcRenderer.invoke('logs:openItem', targetPath),
+  getReportHtmlContent: (targetPath) => ipcRenderer.invoke('logs:getHtml', targetPath),
+  getLogImageBase64: (targetPath) => ipcRenderer.invoke('logs:getImageBase64', targetPath),
   
   onLog: (callback) => {
     const handler = (_event, text, isErr) => callback(text, isErr);

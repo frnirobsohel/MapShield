@@ -86,6 +86,19 @@
           <span class="nav-label">Link</span>
         </button>
 
+        <button class="nav-item" data-tab="tab-logs">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <span class="nav-label">Reports</span>
+        </button>
+
         <button class="nav-item" data-tab="tab-about">
           <div class="nav-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -271,37 +284,37 @@
             <div class="card browser-select-card">
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/>
                     <line x1="2" y1="12" x2="22" y2="12"/>
                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/>
                   </svg>
-                  <h2 style="font-size: 1.05rem; font-weight: 600;">Browser Selection</h2>
+                  <h2 style="font-size: 0.96rem; font-weight: 600;">Browser Selection</h2>
                 </div>
                 <span class="badge badge-success" id="browserDetectedBadge">Detected</span>
               </div>
-              <p class="card-desc">Select which installed browser you want to use for automation.</p>
+              <p class="card-desc">Select installed browsers for rotation &amp; automated reporting tasks.</p>
 
               <div class="form-group" style="margin-bottom: 0;">
-                <label style="margin-bottom: 8px; display: block;">Installed Browsers</label>
+                <label style="margin-bottom: 4px; display: block; font-size: 0.74rem;">Installed Browsers</label>
                 <div id="browserChecklist" class="browser-checklist">
                   <!-- Dynamic browser checkboxes injected by JS -->
                 </div>
-                <div class="toggle-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+                <div class="toggle-row" style="margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);">
                   <label class="switch">
                     <input type="checkbox" id="chkRandomBrowser" checked>
                     <span class="slider"></span>
                   </label>
-                  <span class="switch-label" style="font-size: 0.82rem; font-weight: 500;">Randomly rotate among checked browsers for each review job</span>
+                  <span class="switch-label">Randomly rotate checked browsers for each review job</span>
                 </div>
-                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
                   <button type="button" id="btnBrowseBrowser" class="btn btn-secondary btn-sm" title="Browse for a custom Chromium or portable browser executable">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                     </svg>
-                    <span>Browse Custom Browser (.exe)</span>
+                    <span>Browse Custom (.exe)</span>
                   </button>
-                  <span id="activeBrowserPath" style="font-size: 0.72rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;"></span>
+                  <span id="activeBrowserPath" style="font-size: 0.70rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;"></span>
                 </div>
               </div>
             </div>
@@ -310,19 +323,19 @@
             <div class="card form-card">
               <div class="card-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                     <line x1="8" y1="21" x2="16" y2="21"></line>
                     <line x1="12" y1="17" x2="12" y2="21"></line>
                   </svg>
-                  <h2 style="font-size: 1.05rem; font-weight: 600;">Task Concurrency & Parallel Execution</h2>
+                  <h2 style="font-size: 0.96rem; font-weight: 600;">Task Concurrency &amp; Workers</h2>
                 </div>
-                <span id="concurrencyBadge" class="badge badge-info">1 Worker (Sequential)</span>
+                <span id="concurrencyBadge" class="badge badge-info">1 Worker</span>
               </div>
-              <p class="card-desc">Control how many reporting jobs and browser windows run simultaneously. Each parallel worker operates independently with its own Google account and isolated session.</p>
+              <p class="card-desc">Control concurrent tasks. Each worker runs in an isolated browser session.</p>
 
               <div class="form-group">
-                <label for="selectConcurrency">Max Concurrent Tasks / Workers</label>
+                <label for="selectConcurrency">Max Concurrent Workers</label>
                 <select id="selectConcurrency" class="custom-select">
                   <option value="1" selected>1 Task (Sequential - Safe &amp; Recommended)</option>
                   <option value="2">2 Parallel Tasks (2x Speed - Dual Browsers)</option>
@@ -330,7 +343,7 @@
                   <option value="4">4 Parallel Tasks (4x Speed - Multi-Worker)</option>
                   <option value="5">5 Parallel Tasks (5x Speed - Maximum Power)</option>
                 </select>
-                <span class="input-help">Each concurrent worker runs a separate browser instance with unique account credentials. Multi-tasking requires adequate system RAM.</span>
+                <span class="input-help">Each worker runs an independent browser profile with unique credentials.</span>
               </div>
 
               <div class="button-row mt-20">
@@ -340,29 +353,45 @@
                     <polyline points="17 21 17 13 7 13 7 21"/>
                     <polyline points="7 3 7 8 15 8"/>
                   </svg>
-                  <span>Save Concurrency Setting</span>
+                  <span>Save Concurrency</span>
                 </button>
               </div>
 
               <div id="concurrencyToast" class="toast-msg"></div>
             </div>
 
-            <!-- AI API KEY PANE (Moved here from separate tab) -->
+            <!-- AI API KEY PANE -->
             <div class="card form-card">
               <div class="card-header">
-                <h2>AI Engine & API Configuration</h2>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm1-5.5a2 2 0 0 0-4 0v1h4z"/>
+                  </svg>
+                  <h2 style="font-size: 0.96rem; font-weight: 600;">AI Engine &amp; API Configuration</h2>
+                </div>
                 <span id="aiBadge" class="badge badge-purple">Gemini Powered</span>
               </div>
-              <p class="card-desc">Integrate AI for intelligent review context inspection, automated sentiment evaluation, and smart violation reporting.</p>
+              <p class="card-desc">Integrate AI for intelligent context inspection &amp; automated violation evaluation.</p>
 
-              <div class="form-group">
-                <label for="selectAiProvider">AI Provider</label>
-                <select id="selectAiProvider" class="custom-select">
-                  <option value="gemini" selected>Google Gemini</option>
-                  <option value="openai">OpenAI (ChatGPT)</option>
-                  <option value="anthropic">Anthropic (Claude)</option>
-                  <option value="deepseek">DeepSeek</option>
-                </select>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <div class="form-group">
+                  <label for="selectAiProvider">AI Provider</label>
+                  <select id="selectAiProvider" class="custom-select">
+                    <option value="gemini" selected>Google Gemini</option>
+                    <option value="openai">OpenAI (ChatGPT)</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="deepseek">DeepSeek</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="selectAiModel">AI Model</label>
+                  <select id="selectAiModel" class="custom-select">
+                    <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash (Fastest)</option>
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  </select>
+                </div>
               </div>
 
               <div class="form-group">
@@ -380,22 +409,12 @@
               </div>
 
               <div class="form-group">
-                <label for="selectAiModel">AI Model</label>
-                <select id="selectAiModel" class="custom-select">
-                  <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash (Fastest & Recommended)</option>
-                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label>AI Review Pre-Inspection</label>
                 <div class="toggle-row">
                   <label class="switch">
                     <input type="checkbox" id="checkAiInspection">
                     <span class="slider"></span>
                   </label>
-                  <span class="switch-label">Automatically verify fake review signals before submitting report</span>
+                  <span class="switch-label">Automatically verify fake review signals before reporting</span>
                 </div>
               </div>
 
@@ -416,10 +435,16 @@
             <!-- CAPTCHA AUTO-SOLVER CONFIGURATION -->
             <div class="card form-card">
               <div class="card-header">
-                <h2>CAPTCHA Auto-Solver Configuration</h2>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  <h2 style="font-size: 0.96rem; font-weight: 600;">CAPTCHA Auto-Solver</h2>
+                </div>
                 <span id="captchaBadge" class="badge badge-cyan">2Captcha Ready</span>
               </div>
-              <p class="card-desc">Automatically detect and solve Google reCAPTCHA, Cloudflare Turnstile, and challenge puzzles during automated reporting.</p>
+              <p class="card-desc">Auto-solve Google reCAPTCHA, Cloudflare, and challenges during reporting.</p>
 
               <div class="form-group">
                 <label for="selectCaptchaProvider">CAPTCHA Solver Provider</label>
@@ -445,13 +470,12 @@
               </div>
 
               <div class="form-group">
-                <label>Automatic CAPTCHA Solving</label>
                 <div class="toggle-row">
                   <label class="switch">
                     <input type="checkbox" id="checkCaptchaAutoSolve" checked>
                     <span class="slider"></span>
                   </label>
-                  <span class="switch-label">Automatically solve any CAPTCHA challenge without human intervention</span>
+                  <span class="switch-label">Automatically solve CAPTCHA challenges without human intervention</span>
                 </div>
               </div>
 
@@ -1055,7 +1079,7 @@
 
         <!-- 6. ABOUT & LICENSING PANE -->
         <section id="tab-about" class="pane">
-          <div class="control-layout about-container">
+          <div class="about-container">
 
             <!-- SOFTWARE DETAILS CARD -->
             <div class="card about-simple-card">
@@ -1071,6 +1095,7 @@
                     <h1 class="about-brand-title">MapsShield Pro</h1>
                     <span class="badge badge-primary">v1.2.0</span>
                     <span class="badge badge-success">STABLE 64-BIT</span>
+                    <span class="badge badge-purple">ZERO-CDP</span>
                   </div>
                   <p class="about-brand-desc">Google Maps Review Automation &amp; Anti-Detection Suite</p>
                 </div>
@@ -1079,11 +1104,15 @@
               <div class="about-details-table">
                 <div class="about-detail-row">
                   <span class="detail-label">Edition</span>
-                  <span class="detail-value">MapsShield Pro (64-bit)</span>
+                  <span class="detail-value">MapsShield Pro (Enterprise 64-bit)</span>
                 </div>
                 <div class="about-detail-row">
-                  <span class="detail-label">Platform</span>
-                  <span class="detail-value">Windows Desktop Application</span>
+                  <span class="detail-label">Engine Runtime</span>
+                  <span class="detail-value text-emerald">Zero-CDP Chromium Stealth</span>
+                </div>
+                <div class="about-detail-row">
+                  <span class="detail-label">Platform OS</span>
+                  <span class="detail-value">Windows Desktop Native (x64)</span>
                 </div>
                 <div class="about-detail-row">
                   <span class="detail-label">Machine ID</span>
@@ -1096,6 +1125,10 @@
                       </svg>
                     </button>
                   </div>
+                </div>
+                <div class="about-detail-row">
+                  <span class="detail-label">Storage DB</span>
+                  <span class="detail-value">SQLite 3 WAL (AES-256-GCM)</span>
                 </div>
                 <div class="about-detail-row">
                   <span class="detail-label">Data Directory</span>
@@ -1127,7 +1160,7 @@
                   </div>
                   <div>
                     <h2>Product Activation</h2>
-                    <p class="card-subtitle">Enter your product license key to activate the software</p>
+                    <p class="card-subtitle">Manage device binding &amp; license capabilities</p>
                   </div>
                 </div>
                 <div class="license-status-badge-wrap">
@@ -1164,7 +1197,7 @@
                   </button>
                 </div>
 
-                <div id="licNotification" class="toast-msg" style="margin-top: 10px;"></div>
+                <div id="licNotification" class="toast-msg" style="margin-top: 6px;"></div>
 
                 <!-- Active License Display Details -->
                 <div class="active-license-details">
@@ -1178,10 +1211,224 @@
                       </svg>
                     </button>
                   </div>
-                  <div class="active-plan-pill" style="font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
-                    <span>License Status:</span>
+                  <div class="active-plan-pill" style="font-size: 0.74rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                    <span>Status:</span>
                     <span id="licPlanType" class="text-emerald" style="font-weight: 600;">Lifetime Access</span>
                   </div>
+                </div>
+
+                <!-- Protected Capabilities Grid -->
+                <div class="about-features-grid">
+                  <div class="about-feature-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Zero-CDP Protocol Evasion</span>
+                  </div>
+                  <div class="about-feature-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Biometric Cursor Simulation</span>
+                  </div>
+                  <div class="about-feature-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Multi-Worker Concurrency</span>
+                  </div>
+                  <div class="about-feature-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Forensic SQLite Audit Logs</span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 7. REPORT LOGS & FORENSIC DIAGNOSTICS PANE -->
+        <section id="tab-logs" class="pane">
+          <div class="logs-container">
+
+            <!-- STATS SUMMARY CARDS -->
+            <div class="logs-stats-grid">
+              <div class="card stat-card" id="cardFilterAllLogs">
+                <div class="stat-icon-wrap bg-blue-subtle text-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="3" y1="9" x2="21" y2="9"/>
+                    <line x1="9" y1="21" x2="9" y2="9"/>
+                  </svg>
+                </div>
+                <div class="stat-info">
+                  <span class="stat-label">Total Logged Tasks</span>
+                  <div class="stat-value-row">
+                    <span id="statTotalLogs" class="stat-number">0</span>
+                    <span class="stat-sub">Captures</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card stat-card cursor-pointer" id="cardFilterErrorLogs" title="Click to view only failed tasks">
+                <div class="stat-icon-wrap bg-rose-subtle text-rose">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                </div>
+                <div class="stat-info">
+                  <span class="stat-label">Error Diagnostics</span>
+                  <div class="stat-value-row">
+                    <span id="statErrorLogs" class="stat-number text-rose">0</span>
+                    <span class="stat-sub">Requires Fix</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card stat-card cursor-pointer" id="cardFilterProofLogs" title="Click to view only success proofs">
+                <div class="stat-icon-wrap bg-emerald-subtle text-emerald">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <div class="stat-info">
+                  <span class="stat-label">Success Proofs</span>
+                  <div class="stat-value-row">
+                    <span id="statProofLogs" class="stat-number text-emerald">0</span>
+                    <span class="stat-sub">Completed</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card stat-card" id="cardStorageStats">
+                <div class="stat-icon-wrap bg-amber-subtle text-amber">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
+                  </svg>
+                </div>
+                <div class="stat-info">
+                  <span class="stat-label">Storage Consumed</span>
+                  <div class="stat-value-row">
+                    <span id="statStorageUsed" class="stat-number">0 B</span>
+                    <span class="stat-sub">Disk Space</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ACTION & FILTER TOOLBAR -->
+            <div class="card logs-toolbar-card">
+              <div class="logs-toolbar">
+                <div class="logs-filter-group">
+                  <button class="logs-filter-pill active" data-filter="all">
+                    <span>All Logs</span>
+                    <span class="pill-count" id="countAllPill">0</span>
+                  </button>
+                  <button class="logs-filter-pill" data-filter="error">
+                    <span class="dot-indicator dot-rose"></span>
+                    <span>Errors Only</span>
+                    <span class="pill-count" id="countErrorsPill">0</span>
+                  </button>
+                  <button class="logs-filter-pill" data-filter="proof">
+                    <span class="dot-indicator dot-emerald"></span>
+                    <span>Proofs Only</span>
+                    <span class="pill-count" id="countProofsPill">0</span>
+                  </button>
+                </div>
+
+                <div class="logs-search-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  <input type="text" id="logsSearchInput" placeholder="Filter by URL, email, step, filename, or error..." />
+                  <button id="btnClearLogsSearch" class="btn-clear-search" style="display: none;">&times;</button>
+                </div>
+
+                <div class="logs-actions-group">
+                  <button id="btnExportAiPackage" class="btn btn-primary" title="Export complete diagnostic package (Screenshots, HTML dumps, Logs) into a ZIP for AI debugging">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="7 10 12 15 17 10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span>Download for AI</span>
+                  </button>
+
+                  <button id="btnTriggerClearLogs" class="btn btn-secondary btn-danger-hover" title="Clear or clean up logs to free up storage space">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    <span>Clear Logs</span>
+                  </button>
+
+                  <button id="btnOpenLogsFolderDirect" class="btn btn-secondary" title="Open report_logs directory in Windows Explorer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span>Open Folder</span>
+                  </button>
+
+                  <button id="btnRefreshLogsList" class="btn btn-icon" title="Refresh logs">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="23 4 23 10 17 10"/>
+                      <polyline points="1 20 1 14 7 14"/>
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- LOGS LIST CONTAINER -->
+            <div id="logsListContainer" class="logs-feed-container">
+              <!-- Dynamically populated by ReportLogsComponent -->
+              <div class="logs-empty-state">
+                <div class="empty-icon-pulse">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                  </svg>
+                </div>
+                <h3>No Reports Found</h3>
+                <p>When tasks execute, success proof screenshots and forensic error diagnostics (screenshots + HTML dumps) will be cataloged here automatically.</p>
+              </div>
+            </div>
+
+            <!-- LOGS PAGINATION BAR -->
+            <div class="card logs-pagination-bar" id="logsPaginationBar" style="display: none;">
+              <div class="logs-pagination-info">
+                <span id="logsPaginationInfo">Showing 0 to 0 of 0 logs</span>
+              </div>
+
+              <div class="logs-pagination-controls">
+                <div class="sheet-page-size">
+                  <label for="selectLogsPageSize">Per Page:</label>
+                  <select id="selectLogsPageSize" class="sheet-select-sm">
+                    <option value="5">5</option>
+                    <option value="10" selected>10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                  </select>
+                </div>
+
+                <div class="sheet-page-nav">
+                  <button class="page-nav-btn" id="btnLogsPageFirst" title="First Page" disabled>&laquo;</button>
+                  <button class="page-nav-btn" id="btnLogsPagePrev" title="Previous Page" disabled>&lsaquo;</button>
+                  <div class="page-numbers-wrap" id="logsPageNumbersWrap">
+                    <!-- Page pills -->
+                  </div>
+                  <button class="page-nav-btn" id="btnLogsPageNext" title="Next Page" disabled>&rsaquo;</button>
+                  <button class="page-nav-btn" id="btnLogsPageLast" title="Last Page" disabled>&raquo;</button>
+                </div>
+
+                <div class="sheet-page-jump">
+                  <label for="inputLogsPageJump">Go:</label>
+                  <input type="number" id="inputLogsPageJump" min="1" placeholder="Page" style="width: 48px;" />
                 </div>
               </div>
             </div>
@@ -1431,6 +1678,110 @@
     </div>
   </div>
 
+  <!-- HTML Snapshot Inspector Modal -->
+  <div id="logsHtmlModal" class="modal" style="display: none;">
+    <div class="modal-card modal-card-wide" style="max-width: 900px; width: 95%;">
+      <div class="modal-card-header">
+        <div class="modal-card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-primary" style="width: 16px; height: 16px;">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          <span id="logsHtmlModalTitle">DOM HTML Snapshot Inspector</span>
+        </div>
+        <button id="btnCloseLogsHtmlModal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-card-body">
+        <div class="html-viewer-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span class="text-muted text-xs">Full Page DOM at moment of failure (Zero-Injection Snapshot)</span>
+          <button id="btnCopyRawHtml" class="btn btn-secondary btn-sm">📋 Copy Full HTML</button>
+        </div>
+        <pre id="logsHtmlViewerContent" class="code-dump-box" style="max-height: 520px; overflow: auto; background: #04060a; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; font-family: var(--font-mono); font-size: 11px; color: #94a3b8; white-space: pre-wrap; word-break: break-all;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Debug Prompt Modal -->
+  <div id="logsAiPromptModal" class="modal" style="display: none;">
+    <div class="modal-card modal-card-wide" style="max-width: 760px; width: 95%;">
+      <div class="modal-card-header">
+        <div class="modal-card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple" style="width: 16px; height: 16px;">
+            <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+            <path d="M12 12L2.5 7.5"/>
+            <path d="M12 12v10"/>
+          </svg>
+          <span>AI Diagnostic Prompt Ready</span>
+        </div>
+        <button id="btnCloseAiPromptModal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-card-body">
+        <p class="text-sm text-muted" style="margin-bottom: 10px;">
+          Copy and paste this structured prompt into Google Gemini, Claude, or ChatGPT alongside your downloaded diagnostic ZIP to get an instant code fix:
+        </p>
+        <textarea id="aiPromptTextarea" class="ai-prompt-box" readonly rows="12" style="width: 100%; background: #04060a; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; font-family: var(--font-mono); font-size: 12px; color: #cbd5e1; resize: vertical; line-height: 1.5;"></textarea>
+      </div>
+      <div class="modal-card-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;">
+        <button id="btnCancelAiPrompt" class="btn btn-secondary">Close</button>
+        <button id="btnCopyAiPromptText" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <span id="btnCopyAiPromptTextLabel">Copy Prompt to Clipboard</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clear Logs Options Modal -->
+  <div id="logsClearConfirmModal" class="modal" style="display: none;">
+    <div class="modal-card" style="max-width: 480px; width: 95%;">
+      <div class="modal-card-header">
+        <div class="modal-card-title text-rose">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          <span>Clear Report Logs</span>
+        </div>
+        <button id="btnCloseClearModal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-card-body">
+        <p class="text-sm text-main" style="margin-bottom: 14px;">
+          Choose what you want to delete to free up disk space:
+        </p>
+        <div class="clear-options-list" style="display: flex; flex-direction: column; gap: 10px;">
+          <label class="clear-radio-option" style="display: flex; gap: 10px; align-items: flex-start; cursor: pointer; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card);">
+            <input type="radio" name="clearScope" value="errors" checked style="margin-top: 3px;" />
+            <div class="clear-option-info" style="display: flex; flex-direction: column; gap: 2px;">
+              <strong style="color: var(--text-title); font-size: 13px;">Error Diagnostics Only</strong>
+              <span style="color: var(--text-muted); font-size: 11px;">Clears error screenshots, HTML dumps, and JSON traces. Keeps success proofs.</span>
+            </div>
+          </label>
+          <label class="clear-radio-option" style="display: flex; gap: 10px; align-items: flex-start; cursor: pointer; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card);">
+            <input type="radio" name="clearScope" value="proofs" style="margin-top: 3px;" />
+            <div class="clear-option-info" style="display: flex; flex-direction: column; gap: 2px;">
+              <strong style="color: var(--text-title); font-size: 13px;">Success Proofs Only</strong>
+              <span style="color: var(--text-muted); font-size: 11px;">Clears success screenshots. Keeps error traces for debugging.</span>
+            </div>
+          </label>
+          <label class="clear-radio-option" style="display: flex; gap: 10px; align-items: flex-start; cursor: pointer; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card);">
+            <input type="radio" name="clearScope" value="all" style="margin-top: 3px;" />
+            <div class="clear-option-info" style="display: flex; flex-direction: column; gap: 2px;">
+              <strong class="text-rose" style="font-size: 13px;">Everything (Complete Wipe)</strong>
+              <span style="color: var(--text-muted); font-size: 11px;">Deletes all screenshots, HTML snapshots, and trace files completely.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-card-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;">
+        <button id="btnCancelClearLogs" class="btn btn-secondary">Cancel</button>
+        <button id="btnConfirmExecuteClear" class="btn btn-danger">Confirm Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modular Frontend Architecture -->
   <script src="js/utils/helpers.js"></script>
   <script src="js/state.js"></script>
@@ -1438,6 +1789,7 @@
   <script src="js/components/ai.js"></script>
   <script src="js/components/about.js"></script>
   <script src="js/components/captcha.js"></script>
+  <script src="js/components/report_logs.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

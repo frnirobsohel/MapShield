@@ -195,11 +195,13 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
 
       let details = { reviewText: '', reviewerName: 'Anonymous', rating: 'Unknown' };
       let browser = null;
+      let bm = null;
+      let launched = null;
 
       try {
         const browserPath = settings.browserPath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-        const bm = new BrowserManager();
-        const launched = await bm.launch({
+        bm = new BrowserManager();
+        launched = await bm.launch({
           browserPath,
           headless: true,
           useTempProfile: true,
@@ -208,13 +210,24 @@ function registerLinksIpc({ mainWindow, app, getDatabase, getXLSX }) {
         browser = launched.browser;
         const page = launched.page || (await browser.newPage());
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
-        await new Promise(r => setTimeout(r, 2000));
+        
+        // Dismiss Google cookie consent dialog if present
+        const { handleConsentIfPresent } = require(path.join(__dirname, '../../modules/helpers/dom_utils'));
+        await handleConsentIfPresent(page).catch(() => {});
+
+        // Wait up to 5s for review DOM elements to appear
+        await page.waitForSelector('.wiI7pd, .MyEned, [data-review-id], div.d4r55, h1.DUwDvf', { timeout: 5000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 1000));
         details = await extractReviewDetails(page);
       } catch (browserErr) {
         console.warn('⚠️ Headless review detail extraction error:', browserErr.message);
       } finally {
         if (browser) {
-          try { await browser.close(); } catch (e) {}
+          if (bm) {
+            try { await bm.close(browser, launched?.profilePath); } catch (e) {}
+          } else {
+            try { await browser.close(); } catch (e) {}
+          }
         }
       }
 

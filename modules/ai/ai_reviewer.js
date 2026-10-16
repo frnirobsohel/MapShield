@@ -12,6 +12,16 @@
 async function extractReviewDetails(page) {
   try {
     const details = await page.evaluate(() => {
+      // Expand "More" / "See more" if review text is truncated
+      try {
+        const moreButtons = Array.from(document.querySelectorAll('button.w8nwRe, button[aria-label*="See more"], button[aria-label*="More"], span[aria-label*="See more"]'));
+        for (const btn of moreButtons) {
+          if (btn && btn.offsetParent !== null) {
+            btn.click();
+          }
+        }
+      } catch (e) {}
+
       // Common Google Maps review text selectors
       const textSelectors = [
         '.wiI7pd',
@@ -100,30 +110,35 @@ async function extractReviewDetails(page) {
  * Builds standard system prompt for review policy evaluation
  */
 function buildPrompt(reviewText, reviewerName, rating) {
-  return `You are an expert content policy evaluator for Google Maps reviews.
-Analyze the following Google Maps review and decide the most accurate violation category under which this review should be reported and removed.
+  return `You are an expert Google Maps content moderation policy engine.
+Analyze the following Google Maps review and decide the SINGLE most accurate and actionable violation category under which this review should be reported and removed according to official Google Maps Prohibited and Restricted Content policies.
 
-OFFICIAL GOOGLE MAPS VIOLATION CATEGORIES:
-1. "offtopic" - Review doesn't pertain to an experience at or with this business.
-2. "spam" - Review is from a bot, a fake account, or contains ads and promotions.
-3. "conflict" - Review is from someone affiliated with the business or a competitor's business.
-4. "profanity" - Review contains swear words, or has pornographic or sexually explicit language.
-5. "harmful" - Review contains content that encourages self-harm, dangerous items, or graphic violence to people or animals.
-6. "bullying" - Review personally attacks a specific individual (bullying or harassment).
-7. "discrimination" - Review has harmful language about an individual or group based on identity (hate speech).
-8. "personal_info" - Review contains personal information, such as an address or phone number.
-9. "not_helpful" - Review doesn't help people decide whether to go to this place.
-10. "legal" - Severe defamation, false criminal allegations, trademark/copyright infringement requiring formal legal notice.
+OFFICIAL GOOGLE MAPS VIOLATION CATEGORIES & DISAMBIGUATION RULES:
+1. "profanity" -> Review contains explicit curse words, vulgarity, swearing, sexual innuendos, or obscene slurs.
+2. "bullying" -> Review attacks, insults, or singles out an individual employee, manager, doctor, or owner by name, appearance, or personal traits (harassment/doxxing).
+3. "discrimination" -> Hate speech targeting race, ethnicity, religion, disability, age, nationality, sexual orientation, or gender identity.
+4. "personal_info" -> Review leaks private information such as personal phone numbers, physical residential addresses, private email addresses, or government IDs.
+5. "conflict" -> Conflict of interest: review by a competitor, business owner, former/current disgruntled employee, or reviewer explicitly mentions they never visited ("never went here", "fake place", "go to [Competitor] instead").
+6. "harmful" -> Encourages, depicts, or threatens physical violence, illegal weapon use, drug abuse, self-harm, or severe safety hazards.
+7. "offtopic" -> Content does not pertain to the business customer experience (political commentary, social rants, municipal parking/traffic issues, unrelated public affairs).
+8. "spam" -> Review is fake, bot-generated, promotional advertisement, contains external marketing URLs/phone numbers, or is a BLANK 1-star rating with no text or meaningless gibberish ("asdfghjk").
+9. "not_helpful" -> Vague, 1-2 word unconstructive complaints without any actionable factual experience ("bad", "terrible", "worst place", "no").
+10. "legal" -> Severe legal defamation per se, extortion/blackmail, false criminal accusations (e.g. "thieves", "scam artists", "fraudsters", "stole my credit card"), or copyright/trademark infringement requiring legal action.
 
-REVIEW DATA:
+PRIORITY HIERARCHY FOR TIE-BREAKING:
+If multiple violations are present, prioritize in this strict order:
+Legal Defamation / Crime allegations > Profanity > Discrimination > Bullying > Personal Info > Conflict of Interest > Harmful > Off-Topic > Spam > Not Helpful.
+
+REVIEW DATA TO EVALUATE:
 Reviewer: ${reviewerName || 'Anonymous'}
 Rating: ${rating || 'Unknown'}
-Review Text: "${reviewText || '(No text content, rating only)'}"
+Review Text: "${(reviewText || '').trim() || '(No text content, rating only)'}"
 
 INSTRUCTIONS:
-Select the SINGLE most appropriate category: "offtopic", "spam", "conflict", "profanity", "harmful", "bullying", "discrimination", "personal_info", "not_helpful", or "legal".
-Provide a concise reasoning (1-2 sentences).
-If text is completely empty or generic 1-star with no text, default to "spam".
+1. Select the SINGLE most appropriate category: "offtopic", "spam", "conflict", "profanity", "harmful", "bullying", "discrimination", "personal_info", "not_helpful", or "legal".
+2. If text is completely empty or generic 1-star with zero text, select "spam".
+3. Provide a concise, professional 1-2 sentence legal reasoning explaining why this review violates Google Maps policy.
+4. If the category is "legal" or contains severe criminal accusations ("scam", "thieves", "fraud"), set "recommendedMode" to "legal", otherwise "standard".
 
 Respond ONLY with valid JSON in this exact structure:
 {
@@ -148,7 +163,7 @@ async function callGemini(apiKey, model, prompt) {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.1
+        temperature: 0.0
       }
     })
   });
@@ -183,7 +198,7 @@ async function callOpenAI(apiKey, model, prompt) {
         { role: 'user', content: prompt }
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.1
+      temperature: 0.0
     })
   });
 
@@ -214,6 +229,7 @@ async function callAnthropic(apiKey, model, prompt) {
     body: JSON.stringify({
       model: modelName,
       max_tokens: 350,
+      temperature: 0.0,
       messages: [{ role: 'user', content: prompt }]
     })
   });
@@ -249,7 +265,7 @@ async function callDeepSeek(apiKey, model, prompt) {
         { role: 'user', content: prompt }
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.1
+      temperature: 0.0
     })
   });
 
@@ -351,25 +367,26 @@ function buildMultiCategoryPrompt(reviewText, reviewerName, rating) {
 Analyze the following Google Maps review and select the TOP 1 to 3 MOST APPLICABLE violation categories from Google Maps policy under which this review can be reported and removed.
 
 OFFICIAL GOOGLE MAPS VIOLATION CATEGORIES:
-- "spam": Review is fake, bot-generated, promotional, or paid.
-- "conflict": Conflict of interest (competitor, disgruntled employee, competitor's affiliate).
-- "offtopic": Doesn't describe a genuine personal customer experience with the business.
-- "bullying": Bullying, personal attacks against specific staff/individuals, or harassment.
-- "profanity": Offensive, profane, or inappropriate language.
-- "harmful": Depicts or encourages harm, illegal acts, or dangerous content.
-- "discrimination": Hate speech, identity-based insults.
-- "personal_info": Contains private phone numbers, full addresses, or personal identity info.
-- "not_helpful": Unhelpful rating or irrelevant gibberish.
+- "spam": Fake, bot-generated, advertising, repetitive, or blank 1-star ratings with zero text.
+- "conflict": Conflict of interest (competitor, disgruntled employee, or poster never visited the location).
+- "bullying": Singling out or harassing specific individuals/staff members by name or role.
+- "profanity": Swear words, vulgarity, offensive or sexually explicit language.
+- "offtopic": Not about a real customer experience (politics, social rants, municipal complaints).
+- "discrimination": Hate speech, slurs against race, religion, nationality, or identity.
+- "personal_info": Leaking private phone numbers, home addresses, or personal contact details.
+- "harmful": Content depicting or encouraging violence, illegal acts, or dangerous harm.
+- "not_helpful": Vague, meaningless, or completely non-actionable complaints ("bad", "terrible").
+
+PRIORITY & DISAMBIGUATION:
+1. Rank categories in order of strongest legal and policy violation first.
+2. If the review text is empty or generic 1-star rating with no text, select: ["spam", "conflict", "offtopic"].
+3. If reviewer accuses business of scam/theft/fraud: ["conflict", "spam", "offtopic"].
+4. Provide a 1-sentence reasoning for the selection.
 
 REVIEW DATA:
 Reviewer: ${reviewerName || 'Anonymous'}
 Rating: ${rating || 'Unknown'}
-Review Text: "${reviewText || '(No text content, rating only)'}"
-
-INSTRUCTIONS:
-1. Select between 1 and 3 categories from the list above, ordered by strongest relevance first.
-2. If the review text is empty or generic 1-star rating with no text, default to: ["spam", "conflict", "offtopic"].
-3. Provide a brief 1-sentence reasoning for the selection.
+Review Text: "${(reviewText || '').trim() || '(No text content, rating only)'}"
 
 Respond ONLY with valid JSON in this exact structure:
 {
@@ -450,8 +467,14 @@ async function analyzeReviewMultiCategoriesWithAI({ reviewText, reviewerName, ra
 function buildLegalPrompt(reviewText, reviewerName, rating, businessName = 'the business') {
   const isBlank = !reviewText || reviewText.trim().length === 0 || reviewText.trim() === '(No text content, rating only)';
   
-  return `You are a certified legal content removal specialist specializing in Google Maps Defamation, 16 C.F.R. Part 465 (FTC Fake Review Rule), and Commercial Libel Per Se.
-Analyze the following Google Maps review and generate a formal legal complaint text specifically designed for Google's Legal Removal Webform ("Explain in detail why you believe the content on the above URL is unlawful").
+  return `You are writing a formal review removal request on behalf of ${businessName} for Google's Legal Webform ("Explain in detail why you believe the content on the above URL is unlawful").
+
+WRITE LIKE A REAL HUMAN (AUTHENTIC BUSINESS OWNER / MANAGER):
+- Do NOT sound like an AI bot or use stiff, robotic legalese clichés (avoid robotic phrases like "The undersigned hereby declares", "Furthermore pursuant to", "In witness whereof").
+- Write with the natural voice of a real, genuine human business owner or manager who is reporting a false or malicious review.
+- Explain clearly and naturally what happened: that the business searched customer databases, billing records, and appointment logs, and confirmed this person was never a client or visitor.
+- Naturally integrate legal and policy principles: mention that the false claims constitute commercial defamation, harm business livelihood, and violate Google's Fake Engagement & Deceptive Content policy, and where appropriate, cite FTC 16 C.F.R. § 465.2 or defamation per se.
+- Keep the writing realistic, professional, direct, and convincing.
 
 TARGET REVIEW DATA:
 Reviewer Name: ${reviewerName || 'Anonymous'}
@@ -459,24 +482,19 @@ Rating: ${rating || '1 star'}
 Business Name: ${businessName}
 Review Content: "${isBlank ? '[BLANK 1-STAR RATING WITH ZERO TEXT]' : reviewText.trim()}"
 
-STRICT CONSTRAINTS:
-1. "legalClaimText" MUST BE BETWEEN 650 AND 920 CHARACTERS IN LENGTH. Under NO circumstances exceed 950 characters (Google has a strict 1000 character limit).
-2. For reviews WITH text:
-   - Establish lack of consumer nexus: State that business audited CRM/billing records and confirms reviewer was never a client, violating 16 C.F.R. § 465.2.
-   - Establish Defamation Per Se: State that the false factual allegations impute dishonesty/unlawful acts, causing tortious interference with business operations.
-   - Demand immediate removal under Google UGC Content Policy & applicable civil defamation laws.
-3. For BLANK reviews (no text):
-   - Cite 16 C.F.R. Part 465 & Google Fake Engagement Policy: unverified 1-star rating attack with zero commercial transaction, published with malicious intent to distort the public rating index.
-4. Do NOT use bullet points or markdown headings. Write as a continuous, formal legal paragraph suitable for a webform textarea.
+LENGTH CONSTRAINTS:
+- Length MUST BE between 100 and 140 words (strictly between 600 and 920 characters total).
+- Under NO circumstances exceed 950 characters (Google has an absolute 1000 character limit on this webform).
+- Write as a single continuous paragraph without bullet points or headers.
 
 Respond ONLY with valid JSON in this exact structure:
 {
   "isLegalViolation": true,
-  "legalGrounds": "Defamation Per Se and Deceptive Fake Review (16 CFR § 465.2)",
+  "legalGrounds": "Commercial Defamation and Deceptive Fake Review (16 C.F.R. § 465.2)",
   "severity": "high",
   "infringingExcerpts": ["key quote or blank indicator"],
-  "legalClaimText": "formal legal justification paragraph (650 to 920 characters max)",
-  "formalNoticeSummary": "Demand for immediate removal under Google Policy and Applicable Civil Law"
+  "legalClaimText": "human, authentic, persuasive removal explanation (100-140 words, 600-920 characters max)",
+  "formalNoticeSummary": "Removal request for fake and defamatory review"
 }`;
 }
 
@@ -512,10 +530,10 @@ async function generateLegalNoticeWithAI({
   const isBlank = !cleanText || cleanText === '(No text content, rating only)';
   const revName = (reviewerName || 'Anonymous').trim();
 
-  // High-success battle-tested fallback legal templates (<900 chars)
-  const defaultTextLegal = `This review published by "${revName}" contains false and defamatory factual allegations that inflict commercial injury on ${businessName}. A thorough audit of all point-of-sale, appointment, and CRM records confirms this individual has never been a client or patron of this establishment. Fabricating consumer interactions violates 16 C.F.R. § 465.2 (FTC Rule on Fake Consumer Reviews) and constitutes Defamation Per Se and tortious interference with prospective economic advantage. The statements lack factual basis and were posted with malice to damage business reputation. We formally demand immediate removal under Google's Prohibited and Restricted Content Policy and applicable defamation laws.`;
+  // High-success battle-tested fallback legal templates (Human tone with legal backing, 100-140 words, <900 chars)
+  const defaultTextLegal = `We have reviewed the post submitted by "${revName}" regarding ${businessName}. This claim is completely false. We checked our customer database, billing records, and appointment logs, and this person has never been a client, patient, or visitor at our business. The allegations made here are entirely made up and seem intended to harm our reputation and mislead the public. Fabricating non-existent customer experiences violates Google's Fake Engagement policy as well as 16 C.F.R. § 465.2 (FTC rule against fake reviews) and constitutes commercial defamation. Because this person had no real customer interaction with us, we respectfully request that Google immediately remove this unlawful review.`;
 
-  const defaultBlankLegal = `This 1-star rating submitted by "${revName}" contains zero descriptive feedback and represents a deceptive, unverified attack against ${businessName}. An internal audit confirms the poster is not a registered client or patron. Under 16 C.F.R. Part 465 (FTC Rule on Fake Reviews and Deceptive Practices) and Google's Fake Engagement policy, publishing ratings without genuine commercial experience is an unlawful deceptive practice intended solely to artificially manipulate public rating metrics. Because there is no consumer transaction supporting this submission, it constitutes tortious commercial disparagement. We formally demand immediate removal of this rating from Google Maps.`;
+  const defaultBlankLegal = `This 1-star rating from "${revName}" contains zero written details and is a completely fake submission targeting ${businessName}. We cross-referenced our customer records and confirmed that this individual has never visited or transacted with us. Submitting unverified 1-star ratings without having any actual commercial experience violates Google's Prohibited Content Policy on fake engagement, as well as 16 C.F.R. § 465.2. It is an intentional attempt to manipulate our public rating metrics and harm our business livelihood. Because there is no genuine customer experience behind this rating, we ask Google to remove it immediately.`;
 
   const defaultLegalNotice = {
     isLegalViolation: true,
@@ -556,9 +574,11 @@ async function generateLegalNoticeWithAI({
   }
 
   let finalClaim = (result?.legalClaimText || defaultLegalNotice.legalClaimText).trim();
-  // Strictly enforce Google's 1000 character limit by capping at 950 characters
-  if (finalClaim.length > 950) {
-    finalClaim = finalClaim.slice(0, 940).trim() + '... Immediate removal demanded under applicable law.';
+  if (!finalClaim || finalClaim.length < 50) {
+    finalClaim = defaultLegalNotice.legalClaimText;
+  } else if (finalClaim.length > 950) {
+    const truncated = finalClaim.slice(0, 880).replace(/\s+\S*$/, '');
+    finalClaim = `${truncated}... Immediate removal requested under Google policy and 16 C.F.R. § 465.2.`;
   }
 
   return {
@@ -578,5 +598,6 @@ module.exports = {
   generateLegalNoticeWithAI,
   buildPrompt,
   buildMultiCategoryPrompt,
+  buildLegalPrompt,
   reviewViolationWithGemini: analyzeReviewWithAI
 };
