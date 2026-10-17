@@ -7,6 +7,18 @@ echo ===================================================
 echo   MapsShield Pro - Desktop Application Launcher
 echo ===================================================
 
+:: Check if Node.js is installed
+where node >nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo [ERROR] Node.js is not installed or not found in PATH!
+  echo Please download and install Node.js (LTS version) from:
+  echo https://nodejs.org/
+  echo.
+  pause
+  exit /b 1
+)
+
 if not exist "node_modules" (
   echo [INFO] Dependencies not found. Installing packages...
   echo This may take a minute...
@@ -14,7 +26,7 @@ if not exist "node_modules" (
   if errorlevel 1 (
     echo.
     echo [ERROR] Failed to install dependencies.
-    echo Please run "npm install" manually in this directory.
+    echo Please check your internet connection and run "npm install" manually.
     pause
     exit /b 1
   )
