@@ -12,7 +12,7 @@ where node >nul 2>&1
 if errorlevel 1 (
   echo.
   echo [ERROR] Node.js is not installed or not found in PATH!
-  echo Please download and install Node.js (LTS version) from:
+  echo Please download and install Node.js LTS version from:
   echo https://nodejs.org/
   echo.
   pause
